@@ -59,8 +59,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - 127.0.0.1:4101:4101
     volumes:
       - artifacts:/data/artifacts
     networks:

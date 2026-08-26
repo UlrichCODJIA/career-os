@@ -4,6 +4,7 @@ import { join } from "node:path";
 interface ComposeService {
   environment?: Record<string, string>;
   networks?: string[];
+  ports?: string[];
   volumes?: string[];
 }
 
@@ -32,5 +33,6 @@ describe("local Compose capability boundaries", () => {
     expect(worker?.environment).toHaveProperty("ARTIFACT_ROOT");
     expect(worker?.volumes).toContain("artifacts:/data/artifacts");
     expect(worker?.networks).toEqual(["backend"]);
+    expect(worker?.ports ?? []).toEqual([]);
   });
 });
