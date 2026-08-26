@@ -1,0 +1,17 @@
+[
+  {
+    "type": "run_started",
+    "runId": "run_example_001",
+    "command": "/rank",
+    "args": "synthetic fixture"
+  },
+  {
+    "type": "assistant_text",
+    "text": "Synthetic event content."
+  },
+  {
+    "type": "run_result",
+    "status": "success",
+    "result": "Synthetic result."
+  }
+]

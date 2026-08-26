@@ -2,7 +2,7 @@
 
 Career OS is an open-source, provider-neutral system for the complete journey from job discovery to application, interview, offer, and outcome learning.
 
-> **Status:** architecture foundation. Product features have not been implemented yet. The first milestone establishes trustworthy discovery and canonicalization before any application automation.
+> **Status:** executable foundation. The local profile and typed package boundaries are available; Discovery product features have not been implemented yet.
 
 ## Principles
 
@@ -25,7 +25,7 @@ scripts/                 Repository verification
 tests/                   Cross-cutting tests and future fixtures
 ```
 
-The directories are intentionally skeletal in DSV-001. DSV-002 adds executable workspace packages and local infrastructure without importing either legacy repository as a runtime dependency.
+DSV-002 turns the repository boundary into executable Bun workspaces and local infrastructure without importing either legacy repository as a runtime dependency.
 
 ## Development baseline
 
@@ -42,6 +42,8 @@ bun run build
 ```
 
 `bun run check` executes the complete baseline.
+
+For the complete local profile, see [Local development](docs/development/local-profile.md). It starts loopback-bound web, API, and worker health services plus PostgreSQL and persistent artifact storage.
 
 ## Architecture and delivery
 

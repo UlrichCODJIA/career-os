@@ -9,10 +9,18 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "bun run scripts/verify-repository.ts",
-    "check": "bun run typecheck && bun test && bun run build",
+    "build": "bun run scripts/build-workspaces.ts",
+    "check": "bun run typecheck && bun test && bun run build && bun run verify:repository",
+    "dev:api": "bun --cwd apps/api run dev",
+    "dev:web": "bun --cwd apps/web run dev",
+    "dev:worker": "bun --cwd apps/worker run dev",
+    "local:down": "docker compose --profile local down",
+    "local:smoke": "bun run scripts/smoke-local.ts",
+    "local:up": "docker compose --profile local up --build",
+    "smoke:host": "bun run scripts/smoke-host.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:repository": "bun run scripts/verify-repository.ts"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",

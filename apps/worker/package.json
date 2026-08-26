@@ -1,0 +1,14 @@
+{
+  "name": "@career-os/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@career-os/contracts": "workspace:*",
+    "@career-os/observability": "workspace:*"
+  }
+}

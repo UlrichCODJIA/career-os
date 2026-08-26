@@ -1,0 +1,11 @@
+{
+  "name": "@career-os/connector-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@career-os/contracts": "workspace:*",
+    "@career-os/discovery-domain": "workspace:*"
+  }
+}

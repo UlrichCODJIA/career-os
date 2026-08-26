@@ -14,6 +14,10 @@ const requiredFiles = [
   "docs/architecture/module-boundaries.md",
   "docs/security/threat-model.md",
   "docs/reference-sources.md",
+  "docs/development/local-profile.md",
+  "compose.yaml",
+  "Dockerfile",
+  ".env.example",
   "docs/architecture/decisions/0001-create-career-os-monorepo.md",
   "docs/architecture/decisions/0002-use-postgresql-for-record-queue-and-search.md",
   "docs/architecture/decisions/0003-use-content-addressed-artifacts.md",
@@ -84,6 +88,28 @@ for (const relativePath of dependencyFiles) {
   for (const prohibited of ["ai-job-search-dashboard", "MadsLorentzen/ai-job-search", "file:", "link:"]) {
     if (content.includes(prohibited)) failures.push(`${relativePath} contains prohibited runtime reference: ${prohibited}`);
   }
+}
+
+for (const workspace of [...requiredDirectories.filter((path) => path.startsWith("apps/")), ...requiredDirectories.filter((path) => path.startsWith("packages/"))]) {
+  try {
+    const manifest = JSON.parse(await readFile(join(root, workspace, "package.json"), "utf8")) as {
+      name?: string;
+      private?: boolean;
+      exports?: string;
+    };
+    if (!manifest.name?.startsWith("@career-os/")) failures.push(`${workspace} must use the @career-os package scope`);
+    if (manifest.private !== true) failures.push(`${workspace} must remain private`);
+    if (workspace.startsWith("packages/") && manifest.exports !== "./src/index.ts") {
+      failures.push(`${workspace} must expose only its public src/index.ts entry point`);
+    }
+  } catch {
+    failures.push(`${workspace}/package.json is missing or invalid`);
+  }
+}
+
+const exampleEnvironment = await readFile(join(root, ".env.example"), "utf8");
+for (const marker of ["sk-", "ghp_", "AKIA", "BEGIN PRIVATE KEY"]) {
+  if (exampleEnvironment.includes(marker)) failures.push(`.env.example contains a secret-like marker: ${marker}`);
 }
 
 for (const relativePath of requiredFiles.filter((path) => path.includes("/decisions/"))) {
