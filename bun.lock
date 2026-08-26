@@ -9,8 +9,120 @@
         "typescript": "5.9.3",
       },
     },
+    "apps/api": {
+      "name": "@career-os/api",
+      "version": "0.0.0",
+      "dependencies": {
+        "@career-os/contracts": "workspace:*",
+        "@career-os/observability": "workspace:*",
+      },
+    },
+    "apps/web": {
+      "name": "@career-os/web",
+      "version": "0.0.0",
+      "dependencies": {
+        "@career-os/contracts": "workspace:*",
+        "@career-os/observability": "workspace:*",
+      },
+    },
+    "apps/worker": {
+      "name": "@career-os/worker",
+      "version": "0.0.0",
+      "dependencies": {
+        "@career-os/contracts": "workspace:*",
+        "@career-os/observability": "workspace:*",
+      },
+    },
+    "packages/agent-runtime": {
+      "name": "@career-os/agent-runtime",
+      "version": "0.0.0",
+      "dependencies": {
+        "@career-os/model-gateway": "workspace:*",
+      },
+    },
+    "packages/artifact-store": {
+      "name": "@career-os/artifact-store",
+      "version": "0.0.0",
+    },
+    "packages/connector-sdk": {
+      "name": "@career-os/connector-sdk",
+      "version": "0.0.0",
+      "dependencies": {
+        "@career-os/contracts": "workspace:*",
+        "@career-os/discovery-domain": "workspace:*",
+      },
+    },
+    "packages/connectors": {
+      "name": "@career-os/connectors",
+      "version": "0.0.0",
+      "dependencies": {
+        "@career-os/connector-sdk": "workspace:*",
+      },
+    },
+    "packages/contracts": {
+      "name": "@career-os/contracts",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.1.5",
+      },
+    },
+    "packages/db": {
+      "name": "@career-os/db",
+      "version": "0.0.0",
+      "dependencies": {
+        "@career-os/discovery-domain": "workspace:*",
+      },
+    },
+    "packages/discovery-domain": {
+      "name": "@career-os/discovery-domain",
+      "version": "0.0.0",
+    },
+    "packages/model-gateway": {
+      "name": "@career-os/model-gateway",
+      "version": "0.0.0",
+      "dependencies": {
+        "@career-os/contracts": "workspace:*",
+      },
+    },
+    "packages/observability": {
+      "name": "@career-os/observability",
+      "version": "0.0.0",
+      "dependencies": {
+        "@career-os/contracts": "workspace:*",
+      },
+    },
+    "packages/safe-fetch": {
+      "name": "@career-os/safe-fetch",
+      "version": "0.0.0",
+    },
   },
   "packages": {
+    "@career-os/agent-runtime": ["@career-os/agent-runtime@workspace:packages/agent-runtime"],
+
+    "@career-os/api": ["@career-os/api@workspace:apps/api"],
+
+    "@career-os/artifact-store": ["@career-os/artifact-store@workspace:packages/artifact-store"],
+
+    "@career-os/connector-sdk": ["@career-os/connector-sdk@workspace:packages/connector-sdk"],
+
+    "@career-os/connectors": ["@career-os/connectors@workspace:packages/connectors"],
+
+    "@career-os/contracts": ["@career-os/contracts@workspace:packages/contracts"],
+
+    "@career-os/db": ["@career-os/db@workspace:packages/db"],
+
+    "@career-os/discovery-domain": ["@career-os/discovery-domain@workspace:packages/discovery-domain"],
+
+    "@career-os/model-gateway": ["@career-os/model-gateway@workspace:packages/model-gateway"],
+
+    "@career-os/observability": ["@career-os/observability@workspace:packages/observability"],
+
+    "@career-os/safe-fetch": ["@career-os/safe-fetch@workspace:packages/safe-fetch"],
+
+    "@career-os/web": ["@career-os/web@workspace:apps/web"],
+
+    "@career-os/worker": ["@career-os/worker@workspace:apps/worker"],
+
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 
     "@types/node": ["@types/node@26.3.0", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-L3fgrnchriRC2ExBflb8j4uZZURHZfQsmQeyVzhjcHW4kkwVyo8/0h1B2MVzMTrYUJYu6G7EWs14hW/L9putqw=="],
@@ -20,5 +132,7 @@
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "undici-types": ["undici-types@8.3.0", "", {}, "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="],
+
+    "zod": ["zod@4.1.5", "", {}, "sha512-rcUUZqlLJgBC33IT3PNMgsCq6TzLQEG/Ei/KTCU0PedSWRMAXoOUN+4t/0H+Q8bdnLPdqUYnvboJT0bn/229qg=="],
   }
 }

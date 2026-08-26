@@ -1,0 +1,24 @@
+[
+  {
+    "key": "example-inc/platform-engineer",
+    "title": "Platform Engineer",
+    "company": "Example Inc.",
+    "url": "https://jobs.example.com/platform-engineer",
+    "first_seen": "2026-08-01",
+    "fit": "high",
+    "status": "new",
+    "location": "Remote — Europe",
+    "salary": "EUR 90,000–110,000"
+  },
+  {
+    "key": "sample-labs/data-analyst",
+    "title": "Data Analyst",
+    "company": "Sample Labs",
+    "url": "https://careers.example.org/data-analyst",
+    "first_seen": "2026-08-02",
+    "fit": "medium",
+    "status": "evaluated",
+    "location": null,
+    "deadline": null
+  }
+]

@@ -1,0 +1,102 @@
+name: career-os
+
+x-career-os-service: &career-os-service
+  build:
+    context: .
+  restart: unless-stopped
+  profiles: [local]
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    profiles: [local]
+    environment:
+      POSTGRES_DB: career_os
+      POSTGRES_USER: career_os
+      POSTGRES_PASSWORD: local-development-only
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U career_os -d career_os]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend
+
+  api:
+    <<: *career-os-service
+    command: [bun, run, apps/api/src/index.ts]
+    environment:
+      CAREER_OS_PROFILE: local
+      DATABASE_URL: postgresql://career_os:local-development-only@postgres:5432/career_os
+      API_HOST: 0.0.0.0
+      API_PORT: 4100
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:4100:4100
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: [CMD, bun, -e, "const r=await fetch('http://127.0.0.1:4100/healthz');if(!r.ok)process.exit(1)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    <<: *career-os-service
+    command: [bun, run, apps/worker/src/index.ts]
+    environment:
+      CAREER_OS_PROFILE: local
+      DATABASE_URL: postgresql://career_os:local-development-only@postgres:5432/career_os
+      ARTIFACT_ROOT: /data/artifacts
+      WORKER_HOST: 0.0.0.0
+      WORKER_HEALTH_PORT: 4101
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:4101:4101
+    volumes:
+      - artifacts:/data/artifacts
+    networks:
+      - backend
+    healthcheck:
+      test: [CMD, bun, -e, "const r=await fetch('http://127.0.0.1:4101/healthz');if(!r.ok)process.exit(1)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  web:
+    <<: *career-os-service
+    command: [bun, run, apps/web/src/index.ts]
+    environment:
+      CAREER_OS_PROFILE: local
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 3000
+      PUBLIC_API_URL: http://127.0.0.1:4100
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:3000:3000
+    networks:
+      - frontend
+    healthcheck:
+      test: [CMD, bun, -e, "const r=await fetch('http://127.0.0.1:3000/healthz');if(!r.ok)process.exit(1)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+networks:
+  frontend:
+  backend:
+    internal: true
+
+volumes:
+  artifacts:
+  postgres-data:
