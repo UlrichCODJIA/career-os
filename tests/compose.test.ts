@@ -28,6 +28,8 @@ describe("local Compose capability boundaries", () => {
     expect(web?.networks).toEqual(["frontend"]);
 
     expect(api?.environment).toHaveProperty("DATABASE_URL");
+    expect(api?.environment).toHaveProperty("AUTH_MODE", "bearer");
+    expect(api?.environment?.AUTH_OPERATOR_TOKEN).toContain("CAREER_OS_LOCAL_API_TOKEN");
     expect(api?.networks).toEqual(["frontend", "backend"]);
     expect(worker?.environment).toHaveProperty("DATABASE_URL");
     expect(worker?.environment).toHaveProperty("ARTIFACT_ROOT");

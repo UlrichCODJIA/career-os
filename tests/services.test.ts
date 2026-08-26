@@ -11,6 +11,15 @@ const config: RuntimeConfig = {
   host: "127.0.0.1",
   port: 0,
   artifactRoot: "./artifacts",
+  security: {
+    networkBoundary: "loopback",
+    localOnly: true,
+    publicBaseUrl: "http://127.0.0.1:4100",
+    allowedOrigins: ["http://127.0.0.1:4100"],
+    authenticationMode: "local",
+    transportSecurity: "none",
+    trustedProxyIps: [],
+  },
 };
 
 afterEach(() => {

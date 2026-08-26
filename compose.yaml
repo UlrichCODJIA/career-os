@@ -30,6 +30,12 @@ services:
     command: [bun, run, apps/api/src/index.ts]
     environment:
       CAREER_OS_PROFILE: local
+      NETWORK_BOUNDARY: container-loopback
+      LOCAL_ONLY: "true"
+      DISCOVERY_PUBLIC_BASE_URL: http://127.0.0.1:4100
+      ALLOWED_ORIGINS: http://127.0.0.1:3000,http://127.0.0.1:4100
+      AUTH_MODE: bearer
+      AUTH_OPERATOR_TOKEN: ${CAREER_OS_LOCAL_API_TOKEN:?Run bun run local:setup before starting Compose}
       DATABASE_URL: postgresql://career_os:local-development-only@postgres:5432/career_os
       API_HOST: 0.0.0.0
       API_PORT: 4100
@@ -52,6 +58,9 @@ services:
     command: [bun, run, apps/worker/src/index.ts]
     environment:
       CAREER_OS_PROFILE: local
+      NETWORK_BOUNDARY: container-loopback
+      LOCAL_ONLY: "true"
+      DISCOVERY_PUBLIC_BASE_URL: http://127.0.0.1:4101
       DATABASE_URL: postgresql://career_os:local-development-only@postgres:5432/career_os
       ARTIFACT_ROOT: /data/artifacts
       WORKER_HOST: 0.0.0.0
@@ -74,6 +83,9 @@ services:
     command: [bun, run, apps/web/src/index.ts]
     environment:
       CAREER_OS_PROFILE: local
+      NETWORK_BOUNDARY: container-loopback
+      LOCAL_ONLY: "true"
+      DISCOVERY_PUBLIC_BASE_URL: http://127.0.0.1:3000
       WEB_HOST: 0.0.0.0
       WEB_PORT: 3000
       PUBLIC_API_URL: http://127.0.0.1:4100
