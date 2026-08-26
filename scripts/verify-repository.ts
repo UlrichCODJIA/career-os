@@ -15,6 +15,7 @@ const requiredFiles = [
   "docs/security/threat-model.md",
   "docs/reference-sources.md",
   "docs/development/local-profile.md",
+  "docs/security/deployment-profiles.md",
   "compose.yaml",
   "Dockerfile",
   ".env.example",

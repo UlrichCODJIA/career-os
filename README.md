@@ -2,7 +2,7 @@
 
 Career OS is an open-source, provider-neutral system for the complete journey from job discovery to application, interview, offer, and outcome learning.
 
-> **Status:** executable foundation. The local profile and typed package boundaries are available; Discovery product features have not been implemented yet.
+> **Status:** executable security foundation. The local profile, typed package boundaries, and fail-closed API authentication boundary are available; Discovery ingestion features have not been implemented yet.
 
 ## Principles
 
@@ -25,7 +25,7 @@ scripts/                 Repository verification
 tests/                   Cross-cutting tests and future fixtures
 ```
 
-DSV-002 turns the repository boundary into executable Bun workspaces and local infrastructure without importing either legacy repository as a runtime dependency.
+DSV-002 turns the repository boundary into executable Bun workspaces and local infrastructure without importing either legacy repository as a runtime dependency. DSV-003 adds explicit loopback, container-loopback, and remote API profiles with one HTTP/WebSocket principal model, role checks, exact-origin validation, cookie-mode CSRF protection, and TLS/trusted-proxy validation.
 
 ## Development baseline
 
@@ -51,6 +51,7 @@ For the complete local profile, see [Local development](docs/development/local-p
 - [Architecture decisions](docs/architecture/decisions/)
 - [Reference-source provenance](docs/reference-sources.md)
 - [Threat-model baseline](docs/security/threat-model.md)
+- [Deployment security profiles](docs/security/deployment-profiles.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 

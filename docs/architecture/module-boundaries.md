@@ -19,6 +19,7 @@ apps/*
 | `apps/api` | Validation, authn/authz, pagination, orchestration APIs | `contracts`, `discovery-domain`, interfaces from infrastructure packages | Connector network access, long-running scans, legacy files as authority |
 | `apps/worker` | Scheduler composition and durable handlers | Domain ports plus approved adapters | Web UI, candidate-private services when scanning shared sources |
 | `packages/contracts` | Versioned request, event, and portable domain shapes | Schema/standard-library dependencies only | Apps, DB, providers, connectors |
+| `packages/auth` | Deployment-boundary authentication, request origin/CSRF policy and role authorization | `contracts`, standard cryptography | Apps, persistence, provider or connector capabilities |
 | `packages/discovery-domain` | Identity, normalization, provenance, lifecycle policy | `contracts` | Network, filesystem, database driver, model SDK |
 | `packages/db` | Parameterized SQL, transactions, migrations, row mapping | Domain/contracts ports | HTTP routes, UI, connector parsing |
 | `packages/connector-sdk` | Detection/enumeration/parsing ports and fixture harness | `contracts` | Ambient network, database, model or filesystem authority |

@@ -13,6 +13,7 @@
       "name": "@career-os/api",
       "version": "0.0.0",
       "dependencies": {
+        "@career-os/auth": "workspace:*",
         "@career-os/contracts": "workspace:*",
         "@career-os/observability": "workspace:*",
       },
@@ -43,6 +44,13 @@
     "packages/artifact-store": {
       "name": "@career-os/artifact-store",
       "version": "0.0.0",
+    },
+    "packages/auth": {
+      "name": "@career-os/auth",
+      "version": "0.0.0",
+      "dependencies": {
+        "@career-os/contracts": "workspace:*",
+      },
     },
     "packages/connector-sdk": {
       "name": "@career-os/connector-sdk",
@@ -102,6 +110,8 @@
     "@career-os/api": ["@career-os/api@workspace:apps/api"],
 
     "@career-os/artifact-store": ["@career-os/artifact-store@workspace:packages/artifact-store"],
+
+    "@career-os/auth": ["@career-os/auth@workspace:packages/auth"],
 
     "@career-os/connector-sdk": ["@career-os/connector-sdk@workspace:packages/connector-sdk"],
 

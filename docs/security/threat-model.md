@@ -1,6 +1,6 @@
 # Threat-Model Baseline
 
-**Status:** architecture baseline; controls are planned until verified by implementation and tests
+**Status:** architecture baseline; DSV-003 controls for T02 and the authentication portion of T11 are implemented and tested, while later-workstream controls remain planned
 
 **Repository scope:** `UlrichCODJIA/career-os`
 
@@ -40,6 +40,12 @@ Every URL, redirect, job description, HTML document, upload, email, filename, co
 | T14 | Licensed or personal data outlives purpose/terms | Retention class, deletion worker, provenance and reconciliation |
 | T15 | Compatibility API leaks private data or makes legacy state authoritative | One-way projection, fixed roots and contract tests |
 | T16 | CI/dependency compromise executes with write tokens or secrets | Least-privilege workflows, lockfiles, review and provenance |
+
+## Implemented boundary evidence
+
+DSV-003 implements validated `loopback`, `container-loopback`, and `remote` API profiles. Every non-loopback API bind requires an operator credential, including local containers; the local container credential is generated into ignored configuration rather than checked in. Remote requests use one principal model for HTTP and WebSocket upgrades; operator routes reject ordinary users; unsafe browser requests require an exact allowed origin; cookie mutations require an HMAC-derived CSRF token; trusted-proxy mode accepts secure-forwarding metadata only from exact configured proxy IPs; and remote health output is constrained by a strict path-free response schema.
+
+This does not mark all of T11 complete. Durable domain mutations, idempotency storage, and append-only audit events arrive with their owning database and operator workstreams.
 
 ## Release gates
 
