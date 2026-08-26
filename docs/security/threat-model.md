@@ -1,0 +1,51 @@
+# Threat-Model Baseline
+
+**Status:** architecture baseline; controls are planned until verified by implementation and tests
+
+**Repository scope:** `UlrichCODJIA/career-os`
+
+**Initial reference revision:** GitHub commit created by DSV-001
+
+## Assets
+
+- candidate identity, documents, correspondence, application and interview history;
+- LLM/provider credentials, prompts, model outputs, agent approvals and receipts;
+- company/source registry, policy evidence, canonical jobs, provenance and lifecycle history;
+- raw external artifacts, database state, audit events, backups, logs and telemetry;
+- CI identities, release artifacts and dependency integrity.
+
+## Adversaries and untrusted inputs
+
+Relevant adversaries include unauthenticated remote callers to hosted profiles, malicious or compromised employer/ATS pages, hostile uploaded documents, prompt-injection content, poisoned provider responses, compromised dependencies, abusive authenticated users, and accidental operator misconfiguration.
+
+Every URL, redirect, job description, HTML document, upload, email, filename, connector response, model response, browser page and legacy import is untrusted.
+
+## Principal attack paths
+
+| ID | Attack path | Required architectural control |
+|---|---|---|
+| T01 | URL or redirect reaches loopback, private, link-local, metadata or rebinding destination | Central safe-fetch with DNS/IP and every-hop validation |
+| T02 | Hosted API or WebSocket is exposed without effective identity/authorization | Non-loopback fail-closed profile and shared principal enforcement |
+| T03 | External content becomes model instruction or privileged tool input | Data/instruction separation, typed outputs, least privilege and approval |
+| T04 | Failed/partial scan is interpreted as absence and closes many jobs | Completeness evidence, two-step closure and circuit breakers |
+| T05 | Wrong company/domain/ATS ownership poisons the registry | Ownership evidence, exact identifiers and reversible review |
+| T06 | Legacy checkout or provider-specific SDK becomes product authority | Inward ports, one-way adapters and dependency tests |
+| T07 | Duplicate/stale worker corrupts canonical state | Idempotency, leases, fencing and transactional commits |
+| T08 | Unsanitized HTML or evidence creates stored XSS | Raw/rendered separation, sanitization and safe viewers |
+| T09 | Artifact path, symlink or retention bug exposes/deletes unintended data | Digest keys, fixed roots, atomic writes and reconciliation |
+| T10 | Logs, errors, analytics or URLs leak secrets or candidate data | Schema allowlists, redaction canaries and private/shared isolation |
+| T11 | Administrative mutation lacks authorization or attributable audit | Role checks, CSRF/origin controls, idempotency and append-only audit |
+| T12 | Oversized, compressed or expensive inputs exhaust resources | Byte/time/query/concurrency budgets and backpressure |
+| T13 | Fuzzy resolution merges unrelated companies/opportunities | Exact evidence first, high precision gates and reversible review |
+| T14 | Licensed or personal data outlives purpose/terms | Retention class, deletion worker, provenance and reconciliation |
+| T15 | Compatibility API leaks private data or makes legacy state authoritative | One-way projection, fixed roots and contract tests |
+| T16 | CI/dependency compromise executes with write tokens or secrets | Least-privilege workflows, lockfiles, review and provenance |
+
+## Release gates
+
+- No validated Critical or High issue remains unresolved without an owner-recorded decision.
+- Hosted-profile authentication, SSRF, prompt-injection, XSS, redaction, queue-fencing and closure-safety suites pass.
+- Candidate-private fields are absent from shared query, log, fixture and telemetry schemas.
+- Restore, rollback and audit reconstruction are demonstrated.
+
+The repository-wide scanner policy is `SECURITY.md`. The detailed planning model is maintained in the linked Notion project until a versioned implementation model supersedes this baseline.
