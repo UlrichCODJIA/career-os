@@ -6,9 +6,11 @@ import {
   loadMigrationFiles,
   migrate,
   PostgresRegistryStore,
+  PostgresArtifactMetadata,
   PostgresWorkQueue,
   WORK_QUEUE_SCHEDULER_LOCK_KEY,
 } from "../packages/db/src/index.ts";
+import { ArtifactRetentionService, LocalArtifactStore } from "../packages/artifact-store/src/index.ts";
 import { RegistryService } from "../packages/discovery-domain/src/index.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -46,34 +48,35 @@ const testUrl = databaseUrlFor(baseUrl, databaseName);
 const admin = new SQL(baseUrl, { max: 1 });
 let database: SQL | undefined;
 let upgradeDirectory: string | undefined;
+let artifactDirectory: string | undefined;
 
 try {
   await admin.unsafe(`CREATE DATABASE ${quotedDatabase} TEMPLATE template0`);
 
   const concurrent = await Promise.all([migrate({ databaseUrl: testUrl }), migrate({ databaseUrl: testUrl })]);
-  assert(concurrent.flatMap((result) => result.applied).length === 3, "concurrent migration runners must apply each file once");
-  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 3, "waiting migration runner must verify every applied file");
+  assert(concurrent.flatMap((result) => result.applied).length === 4, "concurrent migration runners must apply each file once");
+  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 4, "waiting migration runner must verify every applied file");
 
   const replay = await migrate({ databaseUrl: testUrl });
-  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 3, "migration replay must be a verified no-op");
+  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 4, "migration replay must be a verified no-op");
 
   const productionDirectory = resolve(import.meta.dir, "../db/migrations");
   const productionMigrations = await loadMigrationFiles(productionDirectory);
-  assert(productionMigrations.length === 3, "all production migrations must exist");
+  assert(productionMigrations.length === 4, "all production migrations must exist");
   upgradeDirectory = await mkdtemp(join(tmpdir(), "career-os-migrations-"));
   for (const migration of productionMigrations) {
     await writeFile(join(upgradeDirectory, migration.name), migration.content, "utf8");
   }
   await writeFile(
-    join(upgradeDirectory, "0004_forward_upgrade_probe.sql"),
+    join(upgradeDirectory, "0005_forward_upgrade_probe.sql"),
     "CREATE TABLE migration_forward_probe (id integer PRIMARY KEY);\n",
     "utf8",
   );
   const upgrade = await migrate({ databaseUrl: testUrl, directory: upgradeDirectory });
-  assert(upgrade.applied.join() === "0004_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
+  assert(upgrade.applied.join() === "0005_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
 
   await writeFile(
-    join(upgradeDirectory, "0005_atomic_failure_probe.sql"),
+    join(upgradeDirectory, "0006_atomic_failure_probe.sql"),
     "CREATE TABLE migration_atomic_failure_probe (id integer PRIMARY KEY);\nSELECT missing_function_for_atomicity_test();\n",
     "utf8",
   );
@@ -86,17 +89,17 @@ try {
   const atomicFailure = await database<{ tableExists: boolean; ledgerRows: number }[]>`
     SELECT
       to_regclass('public.migration_atomic_failure_probe') IS NOT NULL AS "tableExists",
-      (SELECT count(*)::int FROM schema_migrations WHERE name = '0005_atomic_failure_probe.sql') AS "ledgerRows"
+      (SELECT count(*)::int FROM schema_migrations WHERE name = '0006_atomic_failure_probe.sql') AS "ledgerRows"
   `;
   assert(!atomicFailure[0]?.tableExists && atomicFailure[0]?.ledgerRows === 0, "failed migration and ledger write must roll back together");
 
   const originalUpgradeChecksum = (await database<{ checksum: string }[]>`
-    SELECT checksum FROM schema_migrations WHERE name = '0004_forward_upgrade_probe.sql'
+    SELECT checksum FROM schema_migrations WHERE name = '0005_forward_upgrade_probe.sql'
   `)[0]?.checksum;
   assert(originalUpgradeChecksum !== undefined, "forward migration checksum must be recorded");
-  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0004_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0005_forward_upgrade_probe.sql'`;
   await expectRejected(migrate({ databaseUrl: testUrl, directory: upgradeDirectory }), "checksum drift must reject migration startup");
-  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0004_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0005_forward_upgrade_probe.sql'`;
 
   const expectedTables = [
     "artifacts",
@@ -132,6 +135,8 @@ try {
   assert(JSON.stringify(tables.map((row) => row.tableName)) === JSON.stringify(expectedTables), "core table set must match the specification");
 
   const requiredIndexes = [
+    "artifacts_present_reconciliation_idx",
+    "artifacts_retention_due_idx",
     "companies_normalized_name_trgm_idx",
     "companies_verified_primary_domain_uq",
     "lifecycle_events_history_idx",
@@ -430,10 +435,47 @@ try {
   const queueHealth = await firstQueue.health();
   assert(queueHealth.terminalFailed === 1 && queueHealth.expiredLeases === 0, "queue health must expose terminal and expired-lease counts");
 
-  console.log("Database verification passed: migrations, registry governance, scheduler election, leases, fencing, retries, reaping, and queue health.");
+  artifactDirectory = await mkdtemp(join(tmpdir(), "career-os-artifacts-"));
+  const artifactStore = new LocalArtifactStore({ root: artifactDirectory });
+  const artifactMetadata = new PostgresArtifactMetadata(database);
+  const artifactRetention = new ArtifactRetentionService(artifactStore, artifactMetadata);
+  const artifactBytes = new TextEncoder().encode("database retention verification");
+  const storedArtifact = await artifactStore.put(artifactBytes, "text/plain");
+  const artifactNow = new Date();
+  const catalogedArtifact = await artifactMetadata.record({
+    stored: storedArtifact,
+    metadata: {
+      canonicalSourceUrl: "https://example.test/jobs?page=1&token=must-not-persist",
+      responseHeaders: { "Content-Type": "text/plain", Authorization: "Bearer must-not-persist" },
+    },
+    retrievedAt: new Date(artifactNow.getTime() - 10_000),
+    statusCode: 200,
+    retentionClass: "verification",
+    deletionDueAt: new Date(artifactNow.getTime() - 1),
+  });
+  const persistedMetadata = (await database<{ url: string; headers: unknown }[]>`
+    SELECT canonical_source_url AS url, response_headers AS headers FROM artifacts WHERE id = ${catalogedArtifact.id}
+  `)[0];
+  assert(persistedMetadata !== undefined && !JSON.stringify(persistedMetadata).includes("must-not-persist"), "artifact metadata must not persist credential canaries");
+  const concurrentRetentionClaims = await Promise.all([
+    artifactMetadata.claimDue(artifactNow, 10),
+    artifactMetadata.claimDue(artifactNow, 10),
+  ]);
+  assert(concurrentRetentionClaims.flat().length === 1, "competing retention workers must claim a due artifact once");
+  await artifactMetadata.failDeletion(catalogedArtifact.id, "simulated first failure");
+  const retentionResult = await artifactRetention.deleteExpired(artifactNow, 10);
+  assert(retentionResult.deleted === 1 && retentionResult.failed === 0, "failed retention claims must retry to a durable tombstone");
+  assert(!(await artifactStore.has(storedArtifact.digest)), "retention must remove due bytes");
+  const deletedArtifact = (await database<{ state: string; deletedAt: Date | null }[]>`
+    SELECT storage_state AS state, deleted_at AS "deletedAt" FROM artifacts WHERE id = ${catalogedArtifact.id}
+  `)[0];
+  assert(deletedArtifact?.state === "deleted" && deletedArtifact.deletedAt !== null, "retention must preserve deleted metadata as a tombstone");
+
+  console.log("Database verification passed: migrations, registry governance, queue fencing, and artifact retention reconciliation.");
 } finally {
   if (database) await database.close();
   if (upgradeDirectory) await rm(upgradeDirectory, { recursive: true, force: true });
+  if (artifactDirectory) await rm(artifactDirectory, { recursive: true, force: true });
   await admin.unsafe(`DROP DATABASE IF EXISTS ${quotedDatabase} WITH (FORCE)`);
   await admin.close();
 }

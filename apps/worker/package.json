@@ -8,6 +8,7 @@
     "start": "bun run src/index.ts"
   },
   "dependencies": {
+    "@career-os/artifact-store": "workspace:*",
     "@career-os/contracts": "workspace:*",
     "@career-os/db": "workspace:*",
     "@career-os/observability": "workspace:*"

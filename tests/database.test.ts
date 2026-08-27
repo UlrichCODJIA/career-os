@@ -9,6 +9,7 @@ describe("database migration policy", () => {
       "0001_discovery_core.sql",
       "0002_registry_governance.sql",
       "0003_durable_work_queue.sql",
+      "0004_artifact_retention.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[0-9a-f]{64}$/);
   });

@@ -6,6 +6,7 @@ export * from "./migrations.ts";
 export * from "./rows.ts";
 export * from "./registry.ts";
 export * from "./queue.ts";
+export * from "./artifacts.ts";
 
 export interface DatabaseHealth {
   check(): Promise<{ ok: true; latencyMs: number }>;
