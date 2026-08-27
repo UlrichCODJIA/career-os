@@ -8,6 +8,7 @@ describe("database migration policy", () => {
     expect(migrations.map((migration) => migration.name)).toEqual([
       "0001_discovery_core.sql",
       "0002_registry_governance.sql",
+      "0003_durable_work_queue.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[0-9a-f]{64}$/);
   });

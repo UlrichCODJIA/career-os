@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@career-os/contracts": "workspace:*",
+    "@career-os/db": "workspace:*",
     "@career-os/observability": "workspace:*"
   }
 }
