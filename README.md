@@ -25,7 +25,7 @@ scripts/                 Repository verification
 tests/                   Cross-cutting tests and future fixtures
 ```
 
-DSV-002 turns the repository boundary into executable Bun workspaces and local infrastructure without importing either legacy repository as a runtime dependency. DSV-003 adds explicit loopback, container-loopback, and remote API profiles with one HTTP/WebSocket principal model, role checks, exact-origin validation, cookie-mode CSRF protection, and TLS/trusted-proxy validation.
+DSV-002 turns the repository boundary into executable Bun workspaces and local infrastructure without importing either legacy repository as a runtime dependency. DSV-003 adds explicit loopback, container-loopback, and remote API profiles with one HTTP/WebSocket principal model, role checks, exact-origin validation, cookie-mode CSRF protection, and TLS/trusted-proxy validation. DSV-004 adds secretless pull-request checks, migration and dependency validation, secret scanning, SBOM artifacts, and main-only build attestation.
 
 ## Development baseline
 
@@ -52,6 +52,7 @@ For the complete local profile, see [Local development](docs/development/local-p
 - [Reference-source provenance](docs/reference-sources.md)
 - [Threat-model baseline](docs/security/threat-model.md)
 - [Deployment security profiles](docs/security/deployment-profiles.md)
+- [CI and software supply-chain baseline](docs/security/ci-supply-chain.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 
