@@ -5,7 +5,10 @@ import { join } from "node:path";
 describe("database migration policy", () => {
   test("loads the reviewed migration with a reproducible SHA-256 checksum", async () => {
     const migrations = await loadMigrationFiles(join(import.meta.dir, "..", "db", "migrations"));
-    expect(migrations.map((migration) => migration.name)).toEqual(["0001_discovery_core.sql"]);
+    expect(migrations.map((migration) => migration.name)).toEqual([
+      "0001_discovery_core.sql",
+      "0002_registry_governance.sql",
+    ]);
     expect(migrations[0]?.checksum).toMatch(/^[0-9a-f]{64}$/);
   });
 

@@ -5,6 +5,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
+    "@career-os/contracts": "workspace:*",
     "@career-os/discovery-domain": "workspace:*"
   }
 }

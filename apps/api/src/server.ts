@@ -7,6 +7,8 @@ import {
   type AuthenticatedPrincipal,
 } from "@career-os/auth";
 import { createHealthResponse, parseApiRuntimeConfig, type RuntimeConfig } from "@career-os/contracts";
+import type { RegistryService } from "@career-os/discovery-domain";
+import { handleRegistryRoute } from "./registry-routes.ts";
 
 interface WebSocketData {
   principal: AuthenticatedPrincipal;
@@ -42,7 +44,11 @@ function isIdempotencyKey(value: string | null): value is string {
   return value !== null && /^[A-Za-z0-9._:-]{8,128}$/.test(value);
 }
 
-export function createApiServer(config: RuntimeConfig) {
+export interface ApiDependencies {
+  registryService?: RegistryService;
+}
+
+export function createApiServer(config: RuntimeConfig, dependencies: ApiDependencies = {}) {
   config = parseApiRuntimeConfig(config);
   return Bun.serve<WebSocketData>({
     hostname: config.host,
@@ -51,7 +57,7 @@ export function createApiServer(config: RuntimeConfig) {
       config.security.transportSecurity === "tls"
         ? { cert: Bun.file(config.security.tlsCertFile!), key: Bun.file(config.security.tlsKeyFile!) }
         : undefined,
-    fetch(request, server) {
+    async fetch(request, server) {
       const url = new URL(request.url);
       const remoteAddress = server.requestIP(request)?.address;
       if (request.method === "GET" && url.pathname === "/healthz") {
@@ -98,6 +104,13 @@ export function createApiServer(config: RuntimeConfig) {
             { headers: corsHeaders(request, config) },
           );
         }
+
+        const registryResponse = await handleRegistryRoute(request, config, {
+          service: dependencies.registryService,
+          remoteAddress,
+          headers: (registryRequest) => corsHeaders(registryRequest, config),
+        });
+        if (registryResponse) return registryResponse;
 
         if (request.method === "POST" && /^\/api\/v1\/admin\/runs\/[^/]+\/approve$/.test(url.pathname)) {
           const principal = guardRequest(request, config, {

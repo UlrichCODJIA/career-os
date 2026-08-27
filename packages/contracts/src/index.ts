@@ -249,3 +249,129 @@ export const LegacyRunEventSchema = z.discriminatedUnion("type", [
 
 export type LegacyDiscoveryJob = z.infer<typeof LegacyDiscoveryJobSchema>;
 export type LegacyRunEvent = z.infer<typeof LegacyRunEventSchema>;
+
+const RegistryNameSchema = z.string().trim().min(1).max(200);
+const RegistryReasonSchema = z.string().trim().min(8).max(1_000);
+const DomainSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(3)
+  .max(253)
+  .regex(/^(?=.{3,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/);
+const HostPatternSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .refine((value) => DomainSchema.safeParse(value.startsWith("*.") ? value.slice(2) : value).success, "Invalid host pattern");
+const HttpsUrlSchema = z.url().refine((value) => {
+  const url = new URL(value);
+  return url.protocol === "https:"
+    && !url.username
+    && !url.password
+    && (!url.port || url.port === "443")
+    && DomainSchema.safeParse(url.hostname).success;
+}, "URL must use HTTPS on a public domain host without credentials or a non-standard port");
+
+export const SourceCandidateImportRowSchema = z
+  .object({
+    companyName: RegistryNameSchema,
+    primaryDomain: DomainSchema.optional(),
+    careersUrl: HttpsUrlSchema.optional(),
+    atsUrl: HttpsUrlSchema.optional(),
+    discoveryReference: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict()
+  .refine((row) => row.primaryDomain || row.careersUrl || row.atsUrl, {
+    message: "primaryDomain, careersUrl, or atsUrl is required",
+  });
+
+export const SourceCandidateImportSchema = z
+  .object({ rows: SourceCandidateImportRowSchema.array().min(1).max(1_000), reason: RegistryReasonSchema })
+  .strict();
+
+export const SourcePolicyCreateSchema = z
+  .object({
+    sourceFamily: z.string().trim().min(1).max(100),
+    hostPattern: HostPatternSchema,
+    accessClass: z.enum([
+      "documented_public_feed",
+      "employer_authorized_api",
+      "public_employer_html",
+      "licensed_ephemeral",
+      "user_supplied",
+      "blocked",
+    ]),
+    robotsReviewUrl: HttpsUrlSchema.optional(),
+    termsReviewUrl: HttpsUrlSchema.optional(),
+    reviewedAt: z.iso.datetime(),
+    expiresAt: z.iso.datetime(),
+    retentionClass: z.string().trim().min(1).max(100),
+    attributionRequirements: z.string().trim().max(2_000).optional(),
+    maxRequestsPerMinute: z.number().int().min(1).max(600),
+    maxConcurrency: z.number().int().min(1).max(20),
+    contactEmail: z.email(),
+    userAgent: z.string().trim().min(8).max(500),
+    state: z.enum(["approved", "paused", "blocked", "expired"]),
+    reason: RegistryReasonSchema,
+  })
+  .strict();
+
+export const OwnershipEvidenceSchema = z
+  .object({
+    type: z.enum(["employer_domain_link", "ats_identity", "operator_confirmation"]),
+    artifactId: z.uuid().optional(),
+    evidenceUrl: HttpsUrlSchema.optional(),
+    statement: z.string().trim().min(8).max(2_000),
+    confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .refine((evidence) => evidence.artifactId || evidence.evidenceUrl, {
+    message: "artifactId or evidenceUrl is required",
+  });
+
+export const VerifySourceCandidateSchema = z
+  .object({
+    company: z.object({ legalName: RegistryNameSchema.optional(), displayName: RegistryNameSchema, primaryDomain: DomainSchema }).strict(),
+    source: z
+      .object({
+        connectorId: z.enum(["greenhouse", "lever", "ashby"]),
+        tenantKey: z.string().trim().min(1).max(200),
+        boardUrl: HttpsUrlSchema,
+        apiBaseUrl: HttpsUrlSchema,
+        region: z.enum(["global", "eu"]).default("global"),
+        connectorVersion: z.string().trim().min(1).max(100),
+      })
+      .strict(),
+    policyId: z.uuid(),
+    evidence: OwnershipEvidenceSchema,
+    reason: RegistryReasonSchema,
+  })
+  .strict();
+
+export const RejectSourceCandidateSchema = z.object({ reason: RegistryReasonSchema }).strict();
+
+export const SourcePolicyPatchSchema = z
+  .object({
+    state: z.enum(["approved", "paused", "blocked", "expired"]),
+    reviewedAt: z.iso.datetime(),
+    expiresAt: z.iso.datetime(),
+    reason: RegistryReasonSchema,
+  })
+  .strict();
+
+export const SourcePatchSchema = z
+  .object({
+    enabled: z.boolean(),
+    cadenceSeconds: z.number().int().min(60).max(604_800).optional(),
+    reason: RegistryReasonSchema,
+  })
+  .strict();
+
+export type SourceCandidateImportRow = z.infer<typeof SourceCandidateImportRowSchema>;
+export type SourceCandidateImport = z.infer<typeof SourceCandidateImportSchema>;
+export type SourcePolicyCreate = z.infer<typeof SourcePolicyCreateSchema>;
+export type VerifySourceCandidate = z.infer<typeof VerifySourceCandidateSchema>;
+export type RejectSourceCandidate = z.infer<typeof RejectSourceCandidateSchema>;
+export type SourcePolicyPatch = z.infer<typeof SourcePolicyPatchSchema>;
+export type SourcePatch = z.infer<typeof SourcePatchSchema>;
