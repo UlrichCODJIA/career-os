@@ -1,6 +1,6 @@
 # Threat-Model Baseline
 
-**Status:** architecture baseline; DSV-003 controls for T02 and the authentication portion of T11 are implemented and tested, while later-workstream controls remain planned
+**Status:** architecture baseline; controls for T01, T02, T09, T12, T16, and the authentication portion of T11 are implemented and tested, while later-workstream controls remain planned
 
 **Repository scope:** `UlrichCODJIA/career-os`
 
@@ -46,6 +46,8 @@ Every URL, redirect, job description, HTML document, upload, email, filename, co
 DSV-003 implements validated `loopback`, `container-loopback`, and `remote` API profiles. Every non-loopback API bind requires an operator credential, including local containers; the local container credential is generated into ignored configuration rather than checked in. Remote requests use one principal model for HTTP and WebSocket upgrades; operator routes reject ordinary users; unsafe browser requests require an exact allowed origin; cookie mutations require an HMAC-derived CSRF token; trusted-proxy mode accepts secure-forwarding metadata only from exact configured proxy IPs; and remote health output is constrained by a strict path-free response schema.
 
 This does not mark all of T11 complete. Durable domain mutations, idempotency storage, and append-only audit events arrive with their owning database and operator workstreams.
+
+DSV-009 implements T01's application egress boundary in `@career-os/safe-fetch`: policy-owned host allowlists, strict public-address DNS sets, pinned connections, TLS hostname verification, connected-peer checks, manual every-hop redirect validation, and no ambient proxy inheritance. Fixed request, concurrency, timeout, wire-byte, decoded-byte, encoding, and media-type limits cover its T12 scope. Redacted decision schemas and telemetry canaries cover the URL/egress portion of T10. Connectors and their SDK remain pure and cannot import networking or safe-fetch authority. See [Safe fetch boundary](safe-fetch.md).
 
 ## Release gates
 

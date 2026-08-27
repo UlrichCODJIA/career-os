@@ -33,6 +33,9 @@ describe("local Compose capability boundaries", () => {
     expect(api?.networks).toEqual(["frontend", "backend"]);
     expect(worker?.environment).toHaveProperty("DATABASE_URL");
     expect(worker?.environment).toHaveProperty("ARTIFACT_ROOT");
+    for (const prohibited of ["AUTH_OPERATOR_TOKEN", "MODEL_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CANDIDATE_PRIVATE_URL"]) {
+      expect(worker?.environment).not.toHaveProperty(prohibited);
+    }
     expect(worker?.volumes).toContain("artifacts:/data/artifacts");
     expect(worker?.networks).toEqual(["backend"]);
     expect(worker?.ports ?? []).toEqual([]);
