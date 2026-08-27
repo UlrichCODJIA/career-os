@@ -21,7 +21,7 @@ apps/*
 | `packages/contracts` | Versioned request, event, and portable domain shapes | Schema/standard-library dependencies only | Apps, DB, providers, connectors |
 | `packages/auth` | Deployment-boundary authentication, request origin/CSRF policy and role authorization | `contracts`, standard cryptography | Apps, persistence, provider or connector capabilities |
 | `packages/discovery-domain` | Identity, normalization, provenance, lifecycle policy | `contracts` | Network, filesystem, database driver, model SDK |
-| `packages/db` | Parameterized SQL, transactions, migrations, row mapping | Domain/contracts ports | HTTP routes, UI, connector parsing |
+| `packages/db` | Parameterized SQL, transactions, migrations, row mapping | Domain/contracts ports; artifact retention metadata port | HTTP routes, UI, connector parsing |
 | `packages/connector-sdk` | Detection/enumeration/parsing ports and fixture harness | `contracts` | Ambient network, database, model or filesystem authority |
 | `packages/connectors` | ATS-specific pure detection/parsing adapters | `connector-sdk`, `contracts` | Database, candidate data, arbitrary fetch, model secrets |
 | `packages/safe-fetch` | Egress policy, DNS/IP/redirect/TLS/size enforcement | Standard networking and explicit policy types | Candidate-private data, connector interpretation, models |

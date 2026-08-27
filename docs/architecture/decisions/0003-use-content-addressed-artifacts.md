@@ -12,6 +12,8 @@ Discovery needs reproducible raw evidence without storing identical responses re
 
 Store permitted raw bytes by cryptographic digest behind an `ArtifactStore` port. The local profile uses an atomic fixed-root filesystem driver; hosted profiles may use an S3-compatible driver. Metadata records source policy, content type, byte length, fetch time, retention class and redacted request provenance. Rendering and parsing never treat raw artifacts as safe.
 
+The artifact-store package owns the storage and retention ports. The PostgreSQL package may implement the retention-metadata port as a type-only inward dependency; the artifact-store never imports the database adapter. Runtime composition remains in the worker.
+
 ## Rejected alternatives
 
 - **Database byte columns:** rejected for large raw evidence and independent retention/backup concerns.
