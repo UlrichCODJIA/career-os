@@ -18,6 +18,8 @@
     "local:setup": "bun run scripts/setup-local.ts",
     "local:smoke": "bun run scripts/smoke-local.ts",
     "local:up": "docker compose --profile local up --build",
+    "db:migrate": "bun run scripts/migrate.ts",
+    "db:verify": "bun run scripts/verify-database.ts",
     "smoke:host": "bun run scripts/smoke-host.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",

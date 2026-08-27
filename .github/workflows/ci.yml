@@ -36,7 +36,21 @@ jobs:
   migrations:
     name: Validate migrations
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_DB: career_os
+          POSTGRES_USER: career_os
+          POSTGRES_PASSWORD: ci-only-database-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U career_os -d career_os"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
 
     steps:
       - name: Check out source
@@ -49,6 +63,11 @@ jobs:
 
       - name: Validate forward migrations
         run: bun run verify:migrations
+
+      - name: Verify clean create, replay, and forward upgrade
+        run: bun run db:verify
+        env:
+          DATABASE_URL: postgresql://career_os:ci-only-database-password@127.0.0.1:5432/career_os
 
   secrets:
     name: Scan repository secrets

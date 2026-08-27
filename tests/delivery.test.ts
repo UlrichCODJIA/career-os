@@ -52,4 +52,11 @@ describe("delivery policy", () => {
     expect(validateWorkflowPolicy(ci, unguarded).some((failure) => failure.includes("exact protected-main ref"))).toBe(true);
     expect(validateWorkflowPolicy(ci, ambiguous).some((failure) => failure.includes("exact protected-main ref"))).toBe(true);
   });
+
+  test("executes the PostgreSQL migration verification suite in CI", async () => {
+    const ci = await readFile(join(root, ".github", "workflows", "ci.yml"), "utf8");
+    expect(ci).toContain("image: postgres:17.6-alpine");
+    expect(ci).toContain("run: bun run db:verify");
+    expect(ci).toContain("DATABASE_URL: postgresql://career_os:");
+  });
 });
