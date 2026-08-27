@@ -10,6 +10,8 @@
   "dependencies": {
     "@career-os/auth": "workspace:*",
     "@career-os/contracts": "workspace:*",
+    "@career-os/db": "workspace:*",
+    "@career-os/discovery-domain": "workspace:*",
     "@career-os/observability": "workspace:*"
   }
 }

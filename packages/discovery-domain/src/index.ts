@@ -10,3 +10,5 @@ export interface SourceObservation {
   artifactDigest: string;
   completeForAbsenceInference: boolean;
 }
+
+export * from "./registry.ts";

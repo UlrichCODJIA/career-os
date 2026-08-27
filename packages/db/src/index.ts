@@ -4,6 +4,7 @@ import { requirePostgresUrl } from "./migrations.ts";
 export * from "./migration-files.ts";
 export * from "./migrations.ts";
 export * from "./rows.ts";
+export * from "./registry.ts";
 
 export interface DatabaseHealth {
   check(): Promise<{ ok: true; latencyMs: number }>;
