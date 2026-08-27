@@ -15,7 +15,10 @@ Describe the user or system outcome, not only the files changed.
 - [ ] `bun run typecheck`
 - [ ] `bun test`
 - [ ] `bun run build`
+- [ ] `bun run verify:migrations`
 - [ ] Security/privacy boundary reviewed
+- [ ] Dependency or action changes are reflected in `bun.lock` and use immutable action SHAs
+- [ ] Generated SBOM artifact and provenance impact reviewed when dependencies or build outputs change
 - [ ] Migration, rollback, or forward-fix notes included when applicable
 - [ ] Screenshots included for user-interface work
 

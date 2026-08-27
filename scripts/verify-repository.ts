@@ -16,6 +16,8 @@ const requiredFiles = [
   "docs/reference-sources.md",
   "docs/development/local-profile.md",
   "docs/security/deployment-profiles.md",
+  "docs/security/ci-supply-chain.md",
+  ".github/workflows/provenance.yml",
   "compose.yaml",
   "Dockerfile",
   ".env.example",

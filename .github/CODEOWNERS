@@ -1,6 +1,9 @@
 * @UlrichCODJIA
 
 /.github/ @UlrichCODJIA
+/.github/workflows/ @UlrichCODJIA
+/bun.lock @UlrichCODJIA
+**/package.json @UlrichCODJIA
 /docs/architecture/ @UlrichCODJIA
 /docs/security/ @UlrichCODJIA
 /packages/agent-runtime/ @UlrichCODJIA

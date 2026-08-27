@@ -22,6 +22,8 @@ bun run check
 - Use an imperative title and link the tracking issue.
 - Explain architecture and security impact, including relevant threat IDs.
 - Include verification evidence and migration/rollback notes.
+- Keep every GitHub Action pinned to a reviewed full commit SHA; never add `pull_request_target` or production secrets to pull-request workflows.
+- Treat `bun.lock`, package manifests, workflow files, and generated SBOM changes as security-sensitive review surfaces.
 - Never commit credentials, private candidate data, production payloads, or licensed source data outside its permitted retention.
 - Consequential product behavior needs explicit approval-policy and receipt tests.
 
