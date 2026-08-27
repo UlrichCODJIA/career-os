@@ -2,7 +2,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SQL } from "bun";
-import { loadMigrationFiles, migrate, PostgresRegistryStore } from "../packages/db/src/index.ts";
+import {
+  loadMigrationFiles,
+  migrate,
+  PostgresRegistryStore,
+  PostgresWorkQueue,
+  WORK_QUEUE_SCHEDULER_LOCK_KEY,
+} from "../packages/db/src/index.ts";
 import { RegistryService } from "../packages/discovery-domain/src/index.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -45,29 +51,29 @@ try {
   await admin.unsafe(`CREATE DATABASE ${quotedDatabase} TEMPLATE template0`);
 
   const concurrent = await Promise.all([migrate({ databaseUrl: testUrl }), migrate({ databaseUrl: testUrl })]);
-  assert(concurrent.flatMap((result) => result.applied).length === 2, "concurrent migration runners must apply each file once");
-  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 2, "waiting migration runner must verify every applied file");
+  assert(concurrent.flatMap((result) => result.applied).length === 3, "concurrent migration runners must apply each file once");
+  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 3, "waiting migration runner must verify every applied file");
 
   const replay = await migrate({ databaseUrl: testUrl });
-  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 2, "migration replay must be a verified no-op");
+  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 3, "migration replay must be a verified no-op");
 
   const productionDirectory = resolve(import.meta.dir, "../db/migrations");
   const productionMigrations = await loadMigrationFiles(productionDirectory);
-  assert(productionMigrations.length === 2, "both production migrations must exist");
+  assert(productionMigrations.length === 3, "all production migrations must exist");
   upgradeDirectory = await mkdtemp(join(tmpdir(), "career-os-migrations-"));
   for (const migration of productionMigrations) {
     await writeFile(join(upgradeDirectory, migration.name), migration.content, "utf8");
   }
   await writeFile(
-    join(upgradeDirectory, "0003_forward_upgrade_probe.sql"),
+    join(upgradeDirectory, "0004_forward_upgrade_probe.sql"),
     "CREATE TABLE migration_forward_probe (id integer PRIMARY KEY);\n",
     "utf8",
   );
   const upgrade = await migrate({ databaseUrl: testUrl, directory: upgradeDirectory });
-  assert(upgrade.applied.join() === "0003_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
+  assert(upgrade.applied.join() === "0004_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
 
   await writeFile(
-    join(upgradeDirectory, "0004_atomic_failure_probe.sql"),
+    join(upgradeDirectory, "0005_atomic_failure_probe.sql"),
     "CREATE TABLE migration_atomic_failure_probe (id integer PRIMARY KEY);\nSELECT missing_function_for_atomicity_test();\n",
     "utf8",
   );
@@ -80,17 +86,17 @@ try {
   const atomicFailure = await database<{ tableExists: boolean; ledgerRows: number }[]>`
     SELECT
       to_regclass('public.migration_atomic_failure_probe') IS NOT NULL AS "tableExists",
-      (SELECT count(*)::int FROM schema_migrations WHERE name = '0004_atomic_failure_probe.sql') AS "ledgerRows"
+      (SELECT count(*)::int FROM schema_migrations WHERE name = '0005_atomic_failure_probe.sql') AS "ledgerRows"
   `;
   assert(!atomicFailure[0]?.tableExists && atomicFailure[0]?.ledgerRows === 0, "failed migration and ledger write must roll back together");
 
   const originalUpgradeChecksum = (await database<{ checksum: string }[]>`
-    SELECT checksum FROM schema_migrations WHERE name = '0003_forward_upgrade_probe.sql'
+    SELECT checksum FROM schema_migrations WHERE name = '0004_forward_upgrade_probe.sql'
   `)[0]?.checksum;
   assert(originalUpgradeChecksum !== undefined, "forward migration checksum must be recorded");
-  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0003_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0004_forward_upgrade_probe.sql'`;
   await expectRejected(migrate({ databaseUrl: testUrl, directory: upgradeDirectory }), "checksum drift must reject migration startup");
-  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0003_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0004_forward_upgrade_probe.sql'`;
 
   const expectedTables = [
     "artifacts",
@@ -357,7 +363,74 @@ try {
   assert(registryAuditId !== undefined, "registry audit event must exist");
   await expectRejected(database`UPDATE audit_events SET reason = ${"tampered"} WHERE id = ${registryAuditId}`, "registry audit events must remain immutable");
 
-  console.log("Database verification passed: migrations, registry idempotency, ownership, policy interlocks, and immutable audit.");
+  const queueTime = { value: new Date() };
+  const queueClock = { now: () => queueTime.value, random: () => 0 };
+  await registry.updatePolicy(
+    { actorId, idempotencyKey: "queue-policy-0001" },
+    policyResult.policy.id,
+    {
+      state: "approved",
+      reviewedAt: new Date(queueTime.value.getTime() - 1_000).toISOString(),
+      expiresAt: new Date(queueTime.value.getTime() + 86_400_000).toISOString(),
+      reason: "Renew policy for durable queue verification",
+    },
+  );
+  await registry.updateSource(
+    { actorId, idempotencyKey: "queue-source-0001" },
+    verified.sourceId,
+    { enabled: true, reason: "Enable source for scheduler verification" },
+  );
+  await database`UPDATE sources SET next_scan_at = ${queueTime.value.toISOString()} WHERE id = ${verified.sourceId}`;
+
+  const firstQueue = new PostgresWorkQueue(database, queueClock);
+  const secondQueue = new PostgresWorkQueue(database, queueClock);
+  const electedLockHolder = new SQL(testUrl, { max: 1 });
+  await electedLockHolder`SELECT pg_advisory_lock(${WORK_QUEUE_SCHEDULER_LOCK_KEY})`;
+  const unelected = await firstQueue.scheduleDueSources();
+  assert(!unelected.elected && unelected.enqueued === 0, "a second scheduler must fail election while the lock is held");
+  await electedLockHolder`SELECT pg_advisory_unlock(${WORK_QUEUE_SCHEDULER_LOCK_KEY})`;
+  await electedLockHolder.close();
+  const schedulerResults = await Promise.all([firstQueue.scheduleDueSources(), secondQueue.scheduleDueSources()]);
+  assert(schedulerResults.reduce((sum, result) => sum + result.enqueued, 0) === 1, "concurrent schedulers must enqueue one deterministic source job");
+  await database`UPDATE sources SET next_scan_at = ${queueTime.value.toISOString()} WHERE id = ${verified.sourceId}`;
+  const duplicateSchedule = await firstQueue.scheduleDueSources();
+  assert(duplicateSchedule.enqueued === 0, "the active dedupe key must prevent duplicate enqueue within a cadence bucket");
+
+  const competingClaims = await Promise.all([firstQueue.claim("worker-a"), secondQueue.claim("worker-b")]);
+  const leases = competingClaims.flat();
+  assert(leases.length === 1, "SKIP LOCKED workers must claim a queued job exactly once");
+  const originalLease = leases[0]!;
+  const originalWorker = competingClaims[0]!.length === 1 ? "worker-a" : "worker-b";
+  queueTime.value = new Date(originalLease.leaseExpiresAt.getTime() + 1);
+  const reaped = await firstQueue.reapExpired();
+  assert(reaped.retried === 1 && reaped.terminal === 0, "expired retryable lease must return to the retry queue");
+  await expectRejected(firstQueue.succeed(originalLease, originalWorker), "a reaped stale worker must not commit");
+
+  const replacement = (await firstQueue.claim("worker-c"))[0];
+  assert(replacement !== undefined && replacement.leaseGeneration === originalLease.leaseGeneration + 1, "reclaimed jobs must receive a higher fencing generation");
+  const heartbeat = await firstQueue.heartbeat(replacement, "worker-c", 60);
+  assert(heartbeat > queueTime.value, "current lease owner must be able to extend its lease");
+  const retry = await firstQueue.fail(replacement, "worker-c", "upstream_timeout", "Timed out before response headers", true);
+  assert(retry.status === "retryable_failed" && retry.scheduledAt?.getTime() === queueTime.value.getTime(), "full-jitter retry must honor the injected clock and random source");
+  const finalLease = (await firstQueue.claim("worker-d"))[0];
+  assert(finalLease !== undefined && finalLease.leaseGeneration > replacement.leaseGeneration, "each claim must advance the fencing generation");
+  await firstQueue.succeed(finalLease, "worker-d");
+
+  const terminalJobId = crypto.randomUUID();
+  await database`INSERT INTO work_jobs (
+    id, type, dedupe_key, payload_json, status, scheduled_at, max_attempts
+  ) VALUES (
+    ${terminalJobId}, ${"verification"}, ${`terminal:${terminalJobId}`}, ${"{}"}::text::jsonb,
+    ${"queued"}, ${queueTime.value.toISOString()}, ${1}
+  )`;
+  const terminalLease = (await firstQueue.claim("worker-e"))[0];
+  assert(terminalLease?.id === terminalJobId, "attempt-budget fixture must be claimable");
+  const terminal = await firstQueue.fail(terminalLease, "worker-e", "invalid_payload", "Validated payload was rejected", true);
+  assert(terminal.status === "terminal_failed" && terminal.scheduledAt === null, "exhausted attempt budget must terminate the job");
+  const queueHealth = await firstQueue.health();
+  assert(queueHealth.terminalFailed === 1 && queueHealth.expiredLeases === 0, "queue health must expose terminal and expired-lease counts");
+
+  console.log("Database verification passed: migrations, registry governance, scheduler election, leases, fencing, retries, reaping, and queue health.");
 } finally {
   if (database) await database.close();
   if (upgradeDirectory) await rm(upgradeDirectory, { recursive: true, force: true });

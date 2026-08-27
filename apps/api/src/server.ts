@@ -7,6 +7,7 @@ import {
   type AuthenticatedPrincipal,
 } from "@career-os/auth";
 import { createHealthResponse, parseApiRuntimeConfig, type RuntimeConfig } from "@career-os/contracts";
+import type { QueueHealth, PostgresWorkQueue } from "@career-os/db";
 import type { RegistryService } from "@career-os/discovery-domain";
 import { handleRegistryRoute } from "./registry-routes.ts";
 
@@ -46,6 +47,7 @@ function isIdempotencyKey(value: string | null): value is string {
 
 export interface ApiDependencies {
   registryService?: RegistryService;
+  workQueue?: Pick<PostgresWorkQueue, "health">;
 }
 
 export function createApiServer(config: RuntimeConfig, dependencies: ApiDependencies = {}) {
@@ -99,8 +101,11 @@ export function createApiServer(config: RuntimeConfig, dependencies: ApiDependen
 
         if (request.method === "GET" && url.pathname === "/api/v1/admin/queue/health") {
           const principal = guardRequest(request, config, { requiredRole: "operator", remoteAddress });
+          const queueHealth: QueueHealth | { status: "not_configured" } = dependencies.workQueue
+            ? await dependencies.workQueue.health()
+            : { status: "not_configured" };
           return Response.json(
-            { status: "not_configured", principalId: principal.id },
+            { ...queueHealth, principalId: principal.id },
             { headers: corsHeaders(request, config) },
           );
         }
