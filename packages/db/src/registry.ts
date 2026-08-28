@@ -51,6 +51,9 @@ function databaseError(error: unknown): RegistryRuleError | undefined {
   if (constraint.includes("companies_verified_primary_domain_uq")) {
     return new RegistryRuleError("company_domain_already_verified", 409);
   }
+  if (constraint.includes("company_identity_claims_exact_uq")) {
+    return new RegistryRuleError("company_identity_already_claimed", 409);
+  }
   if (code === "23503") return new RegistryRuleError("referenced_record_not_found", 404);
   if (code === "23514") return new RegistryRuleError("registry_invariant_rejected", 422);
   if (code === "23505") return new RegistryRuleError("registry_conflict", 409);
@@ -225,14 +228,27 @@ export class PostgresRegistryStore implements RegistryStore {
         ${command.evidence.type === "employer_domain_link" ? "employer_link" : command.evidence.type === "ats_identity" ? "ats_identity" : "human_review"},
         clock_timestamp(), false, ${command.policyId}, ${new Date(policy.expires_at).toISOString()}, ${command.source.connectorVersion}
       )`;
+      const evidenceId = id();
       await tx`INSERT INTO ownership_evidence (
         id, source_candidate_id, company_id, source_id, evidence_type, artifact_id,
         evidence_url, statement, confidence, recorded_by
       ) VALUES (
-        ${id()}, ${candidateId}, ${companyId}, ${sourceId}, ${command.evidence.type},
+        ${evidenceId}, ${candidateId}, ${companyId}, ${sourceId}, ${command.evidence.type},
         ${command.evidence.artifactId ?? null}, ${command.evidence.evidenceUrl ?? null},
         ${command.evidence.statement}, ${command.evidence.confidence}, ${context.actorId}
       )`;
+      const normalizedDomain = new URL(`https://${command.company.primaryDomain}`).hostname.toLowerCase();
+      const tenantClaim = `${command.source.connectorId}:${command.source.region}:${command.source.tenantKey}`.toLowerCase();
+      await tx`INSERT INTO company_identity_claims (
+        id, company_id, claim_type, claim_value, normalized_value, evidence_type, artifact_id,
+        evidence_url, confidence, recorded_by
+      ) VALUES
+        (${id()}, ${companyId}, ${"verified_domain"}, ${command.company.primaryDomain}, ${normalizedDomain},
+          ${command.evidence.type}, ${command.evidence.artifactId ?? null}, ${command.evidence.evidenceUrl ?? null},
+          ${command.evidence.confidence}, ${context.actorId}),
+        (${id()}, ${companyId}, ${"ats_tenant"}, ${tenantClaim}, ${tenantClaim},
+          ${command.evidence.type}, ${command.evidence.artifactId ?? null}, ${command.evidence.evidenceUrl ?? null},
+          ${command.evidence.confidence}, ${context.actorId})`;
       const rows = await tx<JsonObject[]>`UPDATE source_candidates
         SET review_state = ${"verified"}, review_reason = ${command.reason},
           verified_company_id = ${companyId}, verified_source_id = ${sourceId}

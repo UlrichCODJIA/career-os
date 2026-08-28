@@ -11,6 +11,7 @@ describe("database migration policy", () => {
       "0003_durable_work_queue.sql",
       "0004_artifact_retention.sql",
       "0005_scan_ledger.sql",
+      "0006_company_resolution.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[0-9a-f]{64}$/);
   });

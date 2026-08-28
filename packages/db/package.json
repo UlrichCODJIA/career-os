@@ -6,6 +6,7 @@
   "exports": "./src/index.ts",
   "dependencies": {
     "@career-os/artifact-store": "workspace:*",
+    "@career-os/company-resolver": "workspace:*",
     "@career-os/contracts": "workspace:*",
     "@career-os/discovery-domain": "workspace:*"
   }
