@@ -7,6 +7,7 @@ import {
   migrate,
   PostgresRegistryStore,
   PostgresArtifactMetadata,
+  PostgresCompanyResolutionStore,
   PostgresScanLedger,
   PostgresWorkQueue,
   WORK_QUEUE_SCHEDULER_LOCK_KEY,
@@ -55,29 +56,29 @@ try {
   await admin.unsafe(`CREATE DATABASE ${quotedDatabase} TEMPLATE template0`);
 
   const concurrent = await Promise.all([migrate({ databaseUrl: testUrl }), migrate({ databaseUrl: testUrl })]);
-  assert(concurrent.flatMap((result) => result.applied).length === 5, "concurrent migration runners must apply each file once");
-  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 5, "waiting migration runner must verify every applied file");
+  assert(concurrent.flatMap((result) => result.applied).length === 6, "concurrent migration runners must apply each file once");
+  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 6, "waiting migration runner must verify every applied file");
 
   const replay = await migrate({ databaseUrl: testUrl });
-  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 5, "migration replay must be a verified no-op");
+  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 6, "migration replay must be a verified no-op");
 
   const productionDirectory = resolve(import.meta.dir, "../db/migrations");
   const productionMigrations = await loadMigrationFiles(productionDirectory);
-  assert(productionMigrations.length === 5, "all production migrations must exist");
+  assert(productionMigrations.length === 6, "all production migrations must exist");
   upgradeDirectory = await mkdtemp(join(tmpdir(), "career-os-migrations-"));
   for (const migration of productionMigrations) {
     await writeFile(join(upgradeDirectory, migration.name), migration.content, "utf8");
   }
   await writeFile(
-    join(upgradeDirectory, "0006_forward_upgrade_probe.sql"),
+    join(upgradeDirectory, "0007_forward_upgrade_probe.sql"),
     "CREATE TABLE migration_forward_probe (id integer PRIMARY KEY);\n",
     "utf8",
   );
   const upgrade = await migrate({ databaseUrl: testUrl, directory: upgradeDirectory });
-  assert(upgrade.applied.join() === "0006_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
+  assert(upgrade.applied.join() === "0007_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
 
   await writeFile(
-    join(upgradeDirectory, "0007_atomic_failure_probe.sql"),
+    join(upgradeDirectory, "0008_atomic_failure_probe.sql"),
     "CREATE TABLE migration_atomic_failure_probe (id integer PRIMARY KEY);\nSELECT missing_function_for_atomicity_test();\n",
     "utf8",
   );
@@ -90,23 +91,27 @@ try {
   const atomicFailure = await database<{ tableExists: boolean; ledgerRows: number }[]>`
     SELECT
       to_regclass('public.migration_atomic_failure_probe') IS NOT NULL AS "tableExists",
-      (SELECT count(*)::int FROM schema_migrations WHERE name = '0007_atomic_failure_probe.sql') AS "ledgerRows"
+      (SELECT count(*)::int FROM schema_migrations WHERE name = '0008_atomic_failure_probe.sql') AS "ledgerRows"
   `;
   assert(!atomicFailure[0]?.tableExists && atomicFailure[0]?.ledgerRows === 0, "failed migration and ledger write must roll back together");
 
   const originalUpgradeChecksum = (await database<{ checksum: string }[]>`
-    SELECT checksum FROM schema_migrations WHERE name = '0006_forward_upgrade_probe.sql'
+    SELECT checksum FROM schema_migrations WHERE name = '0007_forward_upgrade_probe.sql'
   `)[0]?.checksum;
   assert(originalUpgradeChecksum !== undefined, "forward migration checksum must be recorded");
-  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0006_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0007_forward_upgrade_probe.sql'`;
   await expectRejected(migrate({ databaseUrl: testUrl, directory: upgradeDirectory }), "checksum drift must reject migration startup");
-  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0006_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0007_forward_upgrade_probe.sql'`;
 
   const expectedTables = [
     "artifacts",
     "audit_events",
     "companies",
     "company_aliases",
+    "company_identity_claims",
+    "company_merge_memberships",
+    "company_resolution_decisions",
+    "company_resolution_fixtures",
     "field_assertions",
     "idempotency_records",
     "lifecycle_events",
@@ -142,6 +147,9 @@ try {
     "artifacts_retention_due_idx",
     "companies_normalized_name_trgm_idx",
     "companies_verified_primary_domain_uq",
+    "company_identity_claims_exact_uq",
+    "company_merge_memberships_active_source_uq",
+    "company_resolution_decisions_history_idx",
     "lifecycle_events_history_idx",
     "opportunities_search_idx",
     "opportunities_title_trgm_idx",
@@ -291,7 +299,7 @@ try {
     { actorId, idempotencyKey: "registry-verify-0001" },
     candidateId,
     verificationCommand,
-  ) as { sourceId: string };
+  ) as { companyId: string; sourceId: string };
   await registry.updateSource(
     { actorId, idempotencyKey: "registry-source-0001" },
     verified.sourceId,
@@ -372,6 +380,90 @@ try {
   `)[0]?.id;
   assert(registryAuditId !== undefined, "registry audit event must exist");
   await expectRejected(database`UPDATE audit_events SET reason = ${"tampered"} WHERE id = ${registryAuditId}`, "registry audit events must remain immutable");
+
+  const resolution = new PostgresCompanyResolutionStore(database);
+  await resolution.recordIdentityClaim(
+    { actorId, idempotencyKey: "company-claim-0001" },
+    {
+      companyId: verified.companyId,
+      type: "verified_alias",
+      value: "Registry Example, Inc.",
+      evidenceType: "operator_confirmed_alias",
+      evidenceUrl: "https://registry-example.test/about",
+      confidence: 1,
+      reason: "Operator verified legal trade-name evidence",
+    },
+  );
+  const identities = await resolution.listCompanyIdentities();
+  const verifiedIdentity = identities.find((identity) => identity.id === verified.companyId);
+  const verifiedKeys = verifiedIdentity?.keys as Array<{ type: string; value: string }> | undefined;
+  assert(verifiedKeys?.some((key) => key.type === "verified_domain" && key.value === "registry-example.test"),
+    "verified employer domains must become durable resolver claims");
+  assert(verifiedKeys?.some((key) => key.type === "ats_tenant" && key.value === "greenhouse:global:registry-example"),
+    "verified ATS tenants must become durable resolver claims");
+  assert(verifiedKeys?.some((key) => key.type === "verified_alias" && key.value === "Registry Example, Inc."),
+    "verified aliases must use the resolver contract rather than the database enum");
+  const duplicateCompanyId = crypto.randomUUID();
+  await database`INSERT INTO companies (
+    id, display_name, normalized_name, primary_domain, resolution_status, resolution_confidence
+  ) VALUES (${duplicateCompanyId}, ${"Registry Example Holdings"}, ${"registry example holdings"},
+    ${`holdings-${crypto.randomUUID()}.test`}, ${"verified"}, ${0.95})`;
+  const review = await resolution.queueReview(duplicateCompanyId, {
+    action: "review",
+    reason: "operator_confirmed_alias",
+    resolverVersion: "1.0.0",
+    candidates: [{ companyId: duplicateCompanyId }, { companyId: verified.companyId }],
+  }, 100);
+  const mergeCommand = {
+    sourceCompanyId: duplicateCompanyId,
+    canonicalCompanyId: verified.companyId,
+    reviewId: review.reviewId,
+    resolverVersion: "1.0.0",
+    confidence: 1,
+    reason: "Operator confirmed exact company ownership evidence",
+    fixtureKey: `company-merge:${duplicateCompanyId}`,
+    fixtureInput: { sourceCompanyId: duplicateCompanyId, canonicalCompanyId: verified.companyId },
+    fixtureExpected: { action: "automatic_match", companyId: verified.companyId },
+  };
+  const merged = await resolution.mergeCompanies(
+    { actorId, idempotencyKey: "company-merge-0001" }, mergeCommand,
+  );
+  const mergeReplay = await resolution.mergeCompanies(
+    { actorId, idempotencyKey: "company-merge-0001" }, mergeCommand,
+  );
+  assert(JSON.stringify(merged) === JSON.stringify(mergeReplay), "reviewed company merge replay must return the original decision");
+  const canonicalAfterMerge = (await database<{ canonicalId: string; isMerged: boolean }[]>`
+    SELECT canonical_company_id AS "canonicalId", is_merged AS "isMerged"
+    FROM canonical_company_resolution WHERE source_company_id = ${duplicateCompanyId}
+  `)[0];
+  assert(canonicalAfterMerge?.canonicalId === verified.companyId && canonicalAfterMerge.isMerged, "merge must preserve the source ID while projecting the canonical company");
+  const split = await resolution.splitCompany(
+    { actorId, idempotencyKey: "company-split-0001" },
+    {
+      sourceCompanyId: duplicateCompanyId,
+      canonicalCompanyId: verified.companyId,
+      resolverVersion: "1.0.0",
+      reason: "Operator reversed the reviewed company merge",
+      fixtureKey: `company-split:${duplicateCompanyId}`,
+      fixtureInput: { sourceCompanyId: duplicateCompanyId, canonicalCompanyId: verified.companyId },
+      fixtureExpected: { action: "create_new", companyId: duplicateCompanyId },
+    },
+  );
+  assert(typeof split.decisionId === "string", "split must append a durable decision");
+  const restored = (await database<{ canonicalId: string; status: string; decisions: number; fixtures: number }[]>`
+    SELECT
+      (SELECT canonical_company_id::text FROM canonical_company_resolution WHERE source_company_id = ${duplicateCompanyId}) AS "canonicalId",
+      (SELECT resolution_status FROM companies WHERE id = ${duplicateCompanyId}) AS status,
+      (SELECT count(*)::int FROM company_resolution_decisions WHERE subject_company_id = ${duplicateCompanyId}) AS decisions,
+      (SELECT count(*)::int FROM company_resolution_fixtures WHERE decision_id IN (
+        SELECT id FROM company_resolution_decisions WHERE subject_company_id = ${duplicateCompanyId}
+      )) AS fixtures
+  `)[0];
+  assert(restored?.canonicalId === duplicateCompanyId && restored.status === "verified" && restored.decisions === 2 && restored.fixtures === 2,
+    "split must restore the original company and retain both immutable decisions as regression fixtures");
+  const firstDecisionId = String(merged.decisionId);
+  await expectRejected(database`DELETE FROM company_resolution_decisions WHERE id = ${firstDecisionId}`, "company decisions must be append-only");
+  await expectRejected(database`UPDATE company_resolution_fixtures SET expected_json = ${"{}"}::text::jsonb WHERE decision_id = ${firstDecisionId}`, "review fixtures must be immutable");
 
   const queueTime = { value: new Date() };
   const queueClock = { now: () => queueTime.value, random: () => 0 };
@@ -568,7 +660,7 @@ try {
   `)[0];
   assert(deletedArtifact?.state === "deleted" && deletedArtifact.deletedAt !== null, "retention must preserve deleted metadata as a tombstone");
 
-  console.log("Database verification passed: migrations, registry governance, queue fencing, scan ledger idempotency, and artifact retention reconciliation.");
+  console.log("Database verification passed: migrations, registry governance, reversible company resolution, queue fencing, scan ledger idempotency, and artifact retention reconciliation.");
 } finally {
   if (database) await database.close();
   if (upgradeDirectory) await rm(upgradeDirectory, { recursive: true, force: true });
