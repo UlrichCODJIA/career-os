@@ -96,6 +96,7 @@
         "@career-os/company-resolver": "workspace:*",
         "@career-os/contracts": "workspace:*",
         "@career-os/discovery-domain": "workspace:*",
+        "@career-os/opportunity-resolver": "workspace:*",
       },
     },
     "packages/discovery-domain": {
@@ -125,6 +126,10 @@
       "dependencies": {
         "@career-os/contracts": "workspace:*",
       },
+    },
+    "packages/opportunity-resolver": {
+      "name": "@career-os/opportunity-resolver",
+      "version": "0.0.0",
     },
     "packages/safe-fetch": {
       "name": "@career-os/safe-fetch",
@@ -157,6 +162,8 @@
     "@career-os/normalization": ["@career-os/normalization@workspace:packages/normalization"],
 
     "@career-os/observability": ["@career-os/observability@workspace:packages/observability"],
+
+    "@career-os/opportunity-resolver": ["@career-os/opportunity-resolver@workspace:packages/opportunity-resolver"],
 
     "@career-os/safe-fetch": ["@career-os/safe-fetch@workspace:packages/safe-fetch"],
 
