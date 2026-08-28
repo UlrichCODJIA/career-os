@@ -33,9 +33,13 @@
       "version": "0.0.0",
       "dependencies": {
         "@career-os/artifact-store": "workspace:*",
+        "@career-os/connector-sdk": "workspace:*",
+        "@career-os/connectors": "workspace:*",
         "@career-os/contracts": "workspace:*",
         "@career-os/db": "workspace:*",
+        "@career-os/normalization": "workspace:*",
         "@career-os/observability": "workspace:*",
+        "@career-os/safe-fetch": "workspace:*",
       },
     },
     "packages/agent-runtime": {
@@ -103,6 +107,13 @@
         "@career-os/contracts": "workspace:*",
       },
     },
+    "packages/normalization": {
+      "name": "@career-os/normalization",
+      "version": "0.0.0",
+      "dependencies": {
+        "@career-os/connector-sdk": "workspace:*",
+      },
+    },
     "packages/observability": {
       "name": "@career-os/observability",
       "version": "0.0.0",
@@ -135,6 +146,8 @@
     "@career-os/discovery-domain": ["@career-os/discovery-domain@workspace:packages/discovery-domain"],
 
     "@career-os/model-gateway": ["@career-os/model-gateway@workspace:packages/model-gateway"],
+
+    "@career-os/normalization": ["@career-os/normalization@workspace:packages/normalization"],
 
     "@career-os/observability": ["@career-os/observability@workspace:packages/observability"],
 

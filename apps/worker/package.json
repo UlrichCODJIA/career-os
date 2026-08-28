@@ -14,6 +14,7 @@
     "@career-os/connector-sdk": "workspace:*",
     "@career-os/connectors": "workspace:*",
     "@career-os/observability": "workspace:*",
+    "@career-os/normalization": "workspace:*",
     "@career-os/safe-fetch": "workspace:*"
   }
 }

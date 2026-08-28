@@ -68,7 +68,7 @@ async function harness(hook?: "afterFetch" | "afterArtifacts" | "beforeCommit") 
     source: { sourceId: "source-1", connectorId: "greenhouse" as const, tenantKey: "acme", boardUrl: "https://job-boards.greenhouse.io/acme", apiBaseUrl: "https://boards-api.greenhouse.io/v1/boards/acme", region: "global" as const, policyId: "policy-1" },
     connector: greenhouseConnector,
     policy: { id: "policy-1", allowedHosts: ["boards-api.greenhouse.io"], allowedContentTypes: ["application/json"], maxRequestsPerMinute: 60, maxConcurrency: 2, maxRedirects: 2, timeoutMs: 5_000, maxWireBytes: 1_000_000, maxResponseBytes: 1_000_000, userAgent: "Career OS test" },
-    safeFetchPolicyVersion: "1.0.0", retentionClass: "standard", normalizerVersion: "1.0.0", taxonomyVersion: "1.0.0",
+    safeFetchPolicyVersion: "1.0.0", retentionClass: "standard",
   };
   return { runner, input, artifacts, catalog, ledger };
 }
