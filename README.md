@@ -2,7 +2,7 @@
 
 Career OS is an open-source, provider-neutral system for the complete journey from job discovery to application, interview, offer, and outcome learning.
 
-> **Status:** executable security foundation. The local profile, durable queue/artifact boundaries, fail-closed API authentication, supply-chain provenance, and SSRF-resistant safe-fetch client are available; source-specific Discovery ingestion starts next.
+> **Status:** executable security foundation. The local profile, durable queue/artifact boundaries, fail-closed API authentication, supply-chain provenance, SSRF-resistant safe-fetch client, and versioned connector SDK/fixture harness are available; source-specific Discovery ingestion starts next.
 
 ## Principles
 
@@ -25,7 +25,7 @@ scripts/                 Repository verification
 tests/                   Cross-cutting tests and future fixtures
 ```
 
-DSV-002 turns the repository boundary into executable Bun workspaces and local infrastructure without importing either legacy repository as a runtime dependency. DSV-003 adds explicit loopback, container-loopback, and remote API profiles with one HTTP/WebSocket principal model, role checks, exact-origin validation, cookie-mode CSRF protection, and TLS/trusted-proxy validation. DSV-004 adds secretless pull-request checks, migration and dependency validation, secret scanning, SBOM artifacts, and main-only build attestation. DSV-009 adds policy-scoped HTTPS retrieval with DNS and peer-address pinning, every-redirect revalidation, resource budgets, restricted headers, and redacted per-hop decisions while connectors remain network-free parsers.
+DSV-002 turns the repository boundary into executable Bun workspaces and local infrastructure without importing either legacy repository as a runtime dependency. DSV-003 adds explicit loopback, container-loopback, and remote API profiles with one HTTP/WebSocket principal model, role checks, exact-origin validation, cookie-mode CSRF protection, and TLS/trusted-proxy validation. DSV-004 adds secretless pull-request checks, migration and dependency validation, secret scanning, SBOM artifacts, and main-only build attestation. DSV-009 adds policy-scoped HTTPS retrieval with DNS and peer-address pinning, every-redirect revalidation, resource budgets, restricted headers, and redacted per-hop decisions while connectors remain network-free parsers. DSV-010 adds strict detection/enumeration/listing contracts, artifact-backed evidence, fail-closed completeness semantics, bounded parsing and sanitization, versioned frozen fixtures, and shadow diffs.
 
 ## Development baseline
 
@@ -48,6 +48,7 @@ For the complete local profile, see [Local development](docs/development/local-p
 ## Architecture and delivery
 
 - [Module boundaries](docs/architecture/module-boundaries.md)
+- [Connector SDK and release contract](docs/architecture/connector-sdk.md)
 - [Architecture decisions](docs/architecture/decisions/)
 - [Reference-source provenance](docs/reference-sources.md)
 - [Threat-model baseline](docs/security/threat-model.md)

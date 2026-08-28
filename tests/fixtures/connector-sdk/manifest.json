@@ -1,0 +1,63 @@
+{
+  "formatVersion": 1,
+  "connectorId": "greenhouse",
+  "connectorVersion": "1.0.0",
+  "provenance": {
+    "source": "synthetic connector-sdk security contract corpus",
+    "capturedAt": "2026-08-28T00:00:00.000Z",
+    "licenseReviewed": true,
+    "sanitized": true
+  },
+  "cases": [
+    {
+      "formatVersion": 1,
+      "caseId": "valid-enumeration",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"artifact-valid","path":"valid.json","sourceUrl":"https://careers.example.com/jobs","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[{"sourceJobId":"job-1","canonicalSourceUrl":"https://careers.example.com/jobs/job-1","lightweightFingerprint":"026ab639c21df8aa80e5789370a9db1b8b524b776fd8a0c2ba71efb377ecc7d9","artifactId":"artifact-valid"},{"sourceJobId":"job-2","canonicalSourceUrl":"https://careers.example.com/jobs/job-2","lightweightFingerprint":"0e753487879fb8a9bb8abef03152c440daec21c9fcd68e4fa4007163d2dd1728","artifactId":"artifact-valid"}],"complete":true,"completenessReason":"complete","responseArtifacts":["artifact-valid"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "empty-is-suspicious",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"artifact-empty","path":"empty.json","sourceUrl":"https://careers.example.com/jobs","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[],"complete":false,"completenessReason":"suspicious_empty","responseArtifacts":["artifact-empty"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "partial-pagination",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"artifact-partial","path":"partial.json","sourceUrl":"https://careers.example.com/jobs","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[{"sourceJobId":"job-1","canonicalSourceUrl":"https://careers.example.com/jobs/job-1","lightweightFingerprint":"026ab639c21df8aa80e5789370a9db1b8b524b776fd8a0c2ba71efb377ecc7d9","artifactId":"artifact-partial"}],"complete":false,"completenessReason":"pagination_incomplete","nextPageToken":"page-2","responseArtifacts":["artifact-partial"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "malformed-json",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"artifact-malformed","path":"malformed.json","sourceUrl":"https://careers.example.com/jobs","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"error","code":"invalid_json"}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "schema-drift",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"artifact-drift","path":"schema-drift.json","sourceUrl":"https://careers.example.com/jobs","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[],"complete":false,"completenessReason":"schema_invalid","responseArtifacts":["artifact-drift"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "oversized-json",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"artifact-oversized","path":"oversized.json","sourceUrl":"https://careers.example.com/jobs","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"error","code":"byte_limit"}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "hostile-html",
+      "operation": "listing",
+      "artifacts": [{"artifactId":"artifact-hostile","path":"hostile.html","sourceUrl":"https://careers.example.com/jobs/job-1","contentType":"text/html","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "item":{"sourceJobId":"job-1","canonicalSourceUrl":"https://careers.example.com/jobs/job-1","applyUrl":"https://careers.example.com/jobs/job-1/apply","lightweightFingerprint":"026ab639c21df8aa80e5789370a9db1b8b524b776fd8a0c2ba71efb377ecc7d9","artifactId":"artifact-hostile"},
+      "expected":{"kind":"result","value":{"sourceJobId":"job-1","title":{"value":"Senior Engineer","origin":"source_text","artifactId":"artifact-hostile","locator":{"kind":"text_span","span":{"start":0,"end":15,"quoteHash":"164d8e424c9b89a5284f46c39bd83e002b20304d9c79a3cf5df1c37a79e2b5f9"}},"extractorId":"fixture","extractorVersion":"1.0.0","confidence":0.9},"descriptionHtml":{"value":"Safe &amp; sound","origin":"deterministic_rule","artifactId":"artifact-hostile","locator":{"kind":"text_span","span":{"start":0,"end":11,"quoteHash":"4cd5d3b138b640784df68a1c7a8c8d93acfd82a02a347b0a75810eef91752f05"}},"extractorId":"fixture","extractorVersion":"1.0.0","confidence":0.9},"descriptionText":{"value":"Safe & sound","origin":"source_text","artifactId":"artifact-hostile","locator":{"kind":"text_span","span":{"start":0,"end":11,"quoteHash":"4cd5d3b138b640784df68a1c7a8c8d93acfd82a02a347b0a75810eef91752f05"}},"extractorId":"fixture","extractorVersion":"1.0.0","confidence":0.9},"locations":{"value":[],"origin":"deterministic_rule","artifactId":"artifact-hostile","locator":{"kind":"text_span","span":{"start":0,"end":11,"quoteHash":"4cd5d3b138b640784df68a1c7a8c8d93acfd82a02a347b0a75810eef91752f05"}},"extractorId":"fixture","extractorVersion":"1.0.0","confidence":0.9},"applyUrl":{"value":"https://careers.example.com/jobs/job-1/apply","origin":"source_field","artifactId":"artifact-hostile","locator":{"kind":"json_pointer","pointer":"/applyUrl"},"extractorId":"fixture","extractorVersion":"1.0.0","confidence":1},"canonicalSourceUrl":{"value":"https://careers.example.com/jobs/job-1","origin":"source_field","artifactId":"artifact-hostile","locator":{"kind":"json_pointer","pointer":"/canonicalSourceUrl"},"extractorId":"fixture","extractorVersion":"1.0.0","confidence":1}}}
+    }
+  ]
+}
