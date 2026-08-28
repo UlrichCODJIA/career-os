@@ -84,7 +84,6 @@ export function startScanWorker(sql: SQL, artifactRoot: string, options: ScanWor
         const context = await loadContext(sql, sourceId);
         await runner.run({
           lease, workerId, ...context, safeFetchPolicyVersion: "1.0.0",
-          normalizerVersion: "1.0.0", taxonomyVersion: "1.0.0",
         });
       } catch (error) {
         // A setup/database failure leaves the fenced lease for the durable reaper; runner failures are recorded atomically.

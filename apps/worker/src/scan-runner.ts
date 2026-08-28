@@ -4,6 +4,7 @@ import type { ArtifactView, ParsedListing, SourceConnector, SourceDescriptor } f
 import { validateParsedListingEvidence } from "@career-os/connector-sdk";
 import type { SafeFetchPolicy, SafeFetchPort, SafeFetchResult } from "@career-os/safe-fetch";
 import type { CompleteScanInput, FailedScanInput, ListingObservationInput, ScanCommitResult, ScanLease } from "@career-os/db";
+import { normalizeParsedListing } from "@career-os/normalization";
 
 // Kept local to the worker: only this composition root may combine network, artifact, parser, and database capabilities.
 export interface ScanArtifactCatalog {
@@ -36,8 +37,6 @@ export interface RunSourceScanInput {
   policy: SafeFetchPolicy;
   safeFetchPolicyVersion: string;
   retentionClass: string;
-  normalizerVersion: string;
-  taxonomyVersion: string;
 }
 
 export class SimulatedWorkerCrash extends Error {}
@@ -50,14 +49,6 @@ const MAX_SCAN_RESPONSES = 100;
 
 function hash(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function evidenceValues(parsed: ParsedListing): Record<string, unknown> {
-  const output: Record<string, unknown> = {};
-  for (const [name, evidence] of Object.entries(parsed)) {
-    output[name] = evidence && typeof evidence === "object" && "value" in evidence ? evidence.value : evidence;
-  }
-  return output;
 }
 
 function classifiedFailure(error: unknown): Pick<FailedScanInput, "reason" | "errorCode" | "retryable"> {
@@ -126,7 +117,7 @@ export class SourceScanRunner {
         }
         const parsed = await input.connector.parseListing(evidenceArtifacts, item);
         validateParsedListingEvidence(parsed, evidenceArtifacts);
-        const normalized = evidenceValues(parsed);
+        const normalized = normalizeParsedListing(parsed);
         const rawDigest = evidenceArtifacts.find((artifact) => artifact.artifactId === parsed.canonicalSourceUrl.artifactId)?.digest
           ?? evidenceArtifacts[0]?.digest;
         if (!rawDigest) throw new Error("listing_artifact_missing");
@@ -135,13 +126,14 @@ export class SourceScanRunner {
           canonicalSourceUrl: parsed.canonicalSourceUrl.value,
           applyUrl: parsed.applyUrl.value,
           artifactId: parsed.canonicalSourceUrl.artifactId,
-          semanticFingerprint: hash(JSON.stringify(normalized)),
+          semanticFingerprint: normalized.semanticFingerprint,
           rawFingerprint: rawDigest,
           parsedSource: parsed as unknown as Record<string, unknown>,
-          normalizedCandidate: normalized,
+          normalizedCandidate: normalized.candidate as unknown as Record<string, unknown>,
           parserVersion: input.connector.version,
-          normalizerVersion: input.normalizerVersion,
-          taxonomyVersion: input.taxonomyVersion,
+          normalizerVersion: normalized.normalizerVersion,
+          taxonomyVersion: normalized.taxonomyVersion,
+          assertions: normalized.assertions,
           sourcePostedAt: parsed.sourcePostedAt ? new Date(parsed.sourcePostedAt) : undefined,
           sourceUpdatedAt: parsed.sourceUpdatedAt ? new Date(parsed.sourceUpdatedAt) : undefined,
           validThrough: parsed.validThrough ? new Date(parsed.validThrough) : undefined,

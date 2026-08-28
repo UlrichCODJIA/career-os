@@ -21,6 +21,16 @@ export interface ListingObservationInput {
   parserVersion: string;
   normalizerVersion: string;
   taxonomyVersion: string;
+  assertions: readonly {
+    fieldPath: string;
+    value: unknown;
+    origin: "source_field" | "source_text" | "deterministic_rule" | "model_derived" | "human_review";
+    artifactId: string;
+    locator: { kind: "json_pointer"; pointer: string } | { kind: "text_span"; span: { start: number; end: number; quoteHash: string } };
+    extractorId: string;
+    extractorVersion: string;
+    confidence: number;
+  }[];
   promptVersion?: string;
   sourcePostedAt?: Date;
   sourceUpdatedAt?: Date;
@@ -205,6 +215,22 @@ export class PostgresScanLedger {
         await tx`INSERT INTO source_observations (
           id, source_scan_id, source_listing_id, listing_version_id, artifact_id, observed_at
         ) VALUES (${Bun.randomUUIDv7()}, ${scanId}, ${listing.id}, ${versionId}, ${observation.artifactId}, ${input.endedAt})`;
+        if (inserted.length) {
+          for (const assertion of observation.assertions) {
+            if (!input.responseArtifactIds.includes(assertion.artifactId)) throw new ScanLedgerError("assertion_artifact_outside_response");
+            const pointer = assertion.locator.kind === "json_pointer" ? assertion.locator.pointer : null;
+            const span = assertion.locator.kind === "text_span" ? assertion.locator.span : null;
+            await tx`INSERT INTO field_assertions (
+              id, target_type, target_id, field_path, value_json, origin, artifact_id, json_pointer,
+              text_span_start, text_span_end, quote_hash, extractor_id, extractor_version, confidence, selected
+            ) VALUES (
+              ${Bun.randomUUIDv7()}, ${"listing_version"}, ${versionId}, ${assertion.fieldPath},
+              ${JSON.stringify(assertion.value)}::text::jsonb, ${assertion.origin}, ${assertion.artifactId}, ${pointer},
+              ${span?.start ?? null}, ${span?.end ?? null}, ${span?.quoteHash ?? null},
+              ${assertion.extractorId}, ${assertion.extractorVersion}, ${assertion.confidence}, ${true}
+            )`;
+          }
+        }
       }
 
       await tx`UPDATE source_scans SET ended_at = ${input.endedAt}, http_outcome = ${"succeeded"},

@@ -496,6 +496,11 @@ try {
       parserVersion: "1.0.0",
       normalizerVersion: "1.0.0",
       taxonomyVersion: "1.0.0",
+      assertions: [{
+        fieldPath: "/displayTitle", value: "Verification Engineer", origin: "source_field",
+        artifactId: catalogedArtifact.id, locator: { kind: "json_pointer", pointer: "/title" },
+        extractorId: "database-verifier", extractorVersion: "1.0.0", confidence: 1,
+      }],
     }],
     byteCount: storedArtifact.byteLength,
     boardHash: "board-v1",
@@ -508,14 +513,16 @@ try {
     scanLedger.commit({ ...completeScanInput, boardHash: "tampered-replay" }),
     "a duplicate delivery with different content must be rejected",
   );
-  const ledgerCounts = (await database<{ scans: number; artifacts: number; observations: number; versions: number }[]>`
+  const ledgerCounts = (await database<{ scans: number; artifacts: number; observations: number; versions: number; assertions: number }[]>`
     SELECT
       (SELECT count(*)::int FROM source_scans WHERE work_job_id = ${scanJobId}) AS scans,
       (SELECT count(*)::int FROM source_scan_artifacts WHERE source_scan_id = ${scanCommit.scanId}) AS artifacts,
       (SELECT count(*)::int FROM source_observations WHERE source_scan_id = ${scanCommit.scanId}) AS observations,
-      (SELECT count(*)::int FROM listing_versions WHERE source_scan_id = ${scanCommit.scanId}) AS versions
+      (SELECT count(*)::int FROM listing_versions WHERE source_scan_id = ${scanCommit.scanId}) AS versions,
+      (SELECT count(*)::int FROM field_assertions WHERE target_type = 'listing_version'
+        AND target_id IN (SELECT id FROM listing_versions WHERE source_scan_id = ${scanCommit.scanId})) AS assertions
   `)[0];
-  assert(ledgerCounts?.scans === 1 && ledgerCounts.artifacts === 1 && ledgerCounts.observations === 1 && ledgerCounts.versions === 1, "duplicate delivery must not duplicate any scan ledger row");
+  assert(ledgerCounts?.scans === 1 && ledgerCounts.artifacts === 1 && ledgerCounts.observations === 1 && ledgerCounts.versions === 1 && ledgerCounts.assertions === 1, "duplicate delivery must not duplicate scan or evidence rows");
   await expectRejected(database`DELETE FROM source_observations WHERE source_scan_id = ${scanCommit.scanId}`, "source observations must be append-only");
   await expectRejected(database`UPDATE source_scans SET board_hash = ${"tampered"} WHERE id = ${scanCommit.scanId}`, "completed source scans must be immutable");
 
