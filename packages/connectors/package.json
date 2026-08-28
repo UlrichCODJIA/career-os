@@ -5,6 +5,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "@career-os/connector-sdk": "workspace:*"
+    "@career-os/connector-sdk": "workspace:*",
+    "zod": "4.1.5"
   }
 }

@@ -13,6 +13,7 @@ const requiredFiles = [
   ".github/workflows/ci.yml",
   "docs/architecture/module-boundaries.md",
   "docs/architecture/connector-sdk.md",
+  "docs/architecture/greenhouse-connector.md",
   "docs/security/threat-model.md",
   "docs/reference-sources.md",
   "docs/development/local-profile.md",

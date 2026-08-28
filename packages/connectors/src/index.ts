@@ -1,1 +1,3 @@
-export const enabledConnectorIds: readonly string[] = [];
+export * from "./greenhouse.ts";
+
+export const enabledConnectorIds = ["greenhouse"] as const;
