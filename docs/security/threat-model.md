@@ -1,6 +1,6 @@
 # Threat-Model Baseline
 
-**Status:** architecture baseline; controls for T01, T02, T09, T16, the connector-SDK and Greenhouse/Lever-source portions of T04/T05/T06/T08/T12, and the authentication portion of T11 are implemented and tested, while later-workstream controls remain planned
+**Status:** architecture baseline; controls for T01, T02, T09, T16, the connector-SDK and Greenhouse/Lever/Ashby-source portions of T04/T05/T06/T08/T12, and the authentication portion of T11 are implemented and tested, while later-workstream controls remain planned
 
 **Repository scope:** `UlrichCODJIA/career-os`
 
@@ -54,6 +54,8 @@ DSV-010 implements the connector-SDK portions of T04, T06, T08, and T12. Strict 
 DSV-011 implements the Greenhouse-source portions of T04, T05, and T08. It binds approved board tokens to the fixed public API host, validates exact artifact endpoints and hosted-board tenant identity, treats empty/count-mismatched/duplicate/cross-tenant/schema-invalid scans as incomplete, and sanitizes entity-encoded description HTML before emitting artifact-backed evidence. It deliberately omits applicant-question expansion. Registry ownership review, multi-scan closure state, fleet circuit breakers, and UI safe-viewer enforcement remain application-level delivery gates. See [Greenhouse connector](../architecture/greenhouse-connector.md).
 
 DSV-012 implements the Lever-source portions of T04, T05, and T08. It binds each approved site to exactly one global or EU API/hosted-board pair, accepts only exact public Posting API list/detail paths, uses bounded 100-record skip cursors, and requires a contiguous artifact chain from skip zero before a terminal page can prove completeness. Suspicious first-page emptiness, missing/out-of-order pages, duplicates, cross-region URLs, malformed identity, schema drift, and the 10,000-listing SDK artifact ceiling fail closed. Hosted description HTML is sanitized before emitting artifact-backed evidence; only hosted application links are preserved and no application API is invoked. Registry ownership review, lifecycle circuit breakers, and UI safe viewers remain application-level gates. See [Lever connector](../architecture/lever-connector.md).
+
+DSV-013 implements the Ashby-source portions of T04, T05, and T08. It binds each approved jobs-page name to the exact global public Posting API endpoint and validates every hosted job/application URL against the response tenant and UUID identity. The documented single-response enumeration can be complete only when schema-valid and non-empty after listed-only filtering; empty/all-unlisted boards, duplicates, cross-tenant records, malformed endpoints, and API-version drift fail closed. Full descriptions are parsed from the bounded JSON artifact and sanitized without executing the hosted application, undocumented GraphQL, or application-submission endpoints. Registry ownership review, multi-scan closure state, lifecycle circuit breakers, and UI safe viewers remain application-level gates. See [Ashby connector](../architecture/ashby-connector.md).
 
 ## Release gates
 

@@ -1,0 +1,56 @@
+{
+  "formatVersion": 1,
+  "connectorId": "ashby",
+  "connectorVersion": "1.0.0",
+  "provenance": {
+    "source": "Synthetic fields derived from the official Ashby Public Job Posting API contract; no employer content retained",
+    "capturedAt": "2026-08-28T00:00:00.000Z",
+    "licenseReviewed": true,
+    "sanitized": true
+  },
+  "cases": [
+    {
+      "formatVersion": 1,
+      "caseId": "ashby-detect-hosted-board",
+      "operation": "detect",
+      "candidateUrl": "https://jobs.ashbyhq.com/acme",
+      "expected": {"kind":"result","value":{"detected":true,"connectorId":"ashby","tenantKey":"acme","confidence":1,"reason":"recognized_host"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "ashby-valid-enumeration",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"ashby-list","path":"list-valid-hostile.json","sourceUrl":"https://api.ashbyhq.com/posting-api/job-board/acme?includeCompensation=true","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[{"sourceJobId":"11111111-2222-4333-8444-555555555555","detailUrl":"https://api.ashbyhq.com/posting-api/job-board/acme?includeCompensation=true","canonicalSourceUrl":"https://jobs.ashbyhq.com/acme/11111111-2222-4333-8444-555555555555","applyUrl":"https://jobs.ashbyhq.com/acme/11111111-2222-4333-8444-555555555555/application","lightweightFingerprint":"d8ced6518eead0dff36142ee27b0e14ffe8a112a8c75ca5e72b41b9ffa06a79e","artifactId":"ashby-list"}],"complete":true,"completenessReason":"complete","responseArtifacts":["ashby-list"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "ashby-empty-is-suspicious",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"ashby-empty","path":"list-empty.json","sourceUrl":"https://api.ashbyhq.com/posting-api/job-board/acme?includeCompensation=true","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[],"complete":false,"completenessReason":"suspicious_empty","responseArtifacts":["ashby-empty"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "ashby-schema-drift",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"ashby-drift","path":"list-schema-drift.json","sourceUrl":"https://api.ashbyhq.com/posting-api/job-board/acme?includeCompensation=true","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[],"complete":false,"completenessReason":"schema_invalid","responseArtifacts":["ashby-drift"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "ashby-malformed",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"ashby-malformed","path":"list-malformed.json","sourceUrl":"https://api.ashbyhq.com/posting-api/job-board/acme?includeCompensation=true","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"error","code":"invalid_json"}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "ashby-valid-hostile-listing",
+      "operation": "listing",
+      "artifacts": [{"artifactId":"ashby-detail","path":"list-valid-hostile.json","sourceUrl":"https://api.ashbyhq.com/posting-api/job-board/acme?includeCompensation=true","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "item": {"sourceJobId":"11111111-2222-4333-8444-555555555555","detailUrl":"https://api.ashbyhq.com/posting-api/job-board/acme?includeCompensation=true","canonicalSourceUrl":"https://jobs.ashbyhq.com/acme/11111111-2222-4333-8444-555555555555","applyUrl":"https://jobs.ashbyhq.com/acme/11111111-2222-4333-8444-555555555555/application","lightweightFingerprint":"d8ced6518eead0dff36142ee27b0e14ffe8a112a8c75ca5e72b41b9ffa06a79e","artifactId":"ashby-list"},
+      "expected": {"kind":"result","value":{"sourceJobId":"11111111-2222-4333-8444-555555555555","sourcePostedAt":"2026-08-27T12:30:00.000+00:00","title":{"value":"Senior Platform Engineer","origin":"source_field","artifactId":"ashby-detail","locator":{"kind":"json_pointer","pointer":"/jobs/0/title"},"extractorId":"ashby","extractorVersion":"1.0.0","confidence":1},"descriptionHtml":{"value":"About<br>Build &amp; ship<br>Apply","origin":"deterministic_rule","artifactId":"ashby-detail","locator":{"kind":"json_pointer","pointer":"/jobs/0/descriptionHtml"},"extractorId":"ashby","extractorVersion":"1.0.0","confidence":0.99},"descriptionText":{"value":"About\nBuild & ship\nApply","origin":"deterministic_rule","artifactId":"ashby-detail","locator":{"kind":"json_pointer","pointer":"/jobs/0/descriptionHtml"},"extractorId":"ashby","extractorVersion":"1.0.0","confidence":0.99},"locations":{"value":[{"label":"Remote - US"},{"label":"New York, NY"}],"origin":"deterministic_rule","artifactId":"ashby-detail","locator":{"kind":"json_pointer","pointer":"/jobs/0/location"},"extractorId":"ashby","extractorVersion":"1.0.0","confidence":0.99},"workplaceType":{"value":"remote","origin":"source_field","artifactId":"ashby-detail","locator":{"kind":"json_pointer","pointer":"/jobs/0/workplaceType"},"extractorId":"ashby","extractorVersion":"1.0.0","confidence":1},"employmentType":{"value":"FullTime","origin":"source_field","artifactId":"ashby-detail","locator":{"kind":"json_pointer","pointer":"/jobs/0/employmentType"},"extractorId":"ashby","extractorVersion":"1.0.0","confidence":1},"compensation":{"value":{"rawText":"$120K - $150K","minimum":120000,"maximum":150000,"currency":"USD","period":"year"},"origin":"deterministic_rule","artifactId":"ashby-detail","locator":{"kind":"json_pointer","pointer":"/jobs/0/compensation"},"extractorId":"ashby","extractorVersion":"1.0.0","confidence":0.99},"department":{"value":"Engineering","origin":"source_field","artifactId":"ashby-detail","locator":{"kind":"json_pointer","pointer":"/jobs/0/department"},"extractorId":"ashby","extractorVersion":"1.0.0","confidence":1},"team":{"value":"Platform","origin":"source_field","artifactId":"ashby-detail","locator":{"kind":"json_pointer","pointer":"/jobs/0/team"},"extractorId":"ashby","extractorVersion":"1.0.0","confidence":1},"applyUrl":{"value":"https://jobs.ashbyhq.com/acme/11111111-2222-4333-8444-555555555555/application","origin":"source_field","artifactId":"ashby-detail","locator":{"kind":"json_pointer","pointer":"/jobs/0/applyUrl"},"extractorId":"ashby","extractorVersion":"1.0.0","confidence":1},"canonicalSourceUrl":{"value":"https://jobs.ashbyhq.com/acme/11111111-2222-4333-8444-555555555555","origin":"source_field","artifactId":"ashby-detail","locator":{"kind":"json_pointer","pointer":"/jobs/0/jobUrl"},"extractorId":"ashby","extractorVersion":"1.0.0","confidence":1}}}
+    }
+  ]
+}

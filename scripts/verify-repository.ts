@@ -15,6 +15,7 @@ const requiredFiles = [
   "docs/architecture/connector-sdk.md",
   "docs/architecture/greenhouse-connector.md",
   "docs/architecture/lever-connector.md",
+  "docs/architecture/ashby-connector.md",
   "docs/security/threat-model.md",
   "docs/reference-sources.md",
   "docs/development/local-profile.md",
