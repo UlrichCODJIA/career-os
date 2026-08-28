@@ -8,6 +8,7 @@ import {
   PostgresRegistryStore,
   PostgresArtifactMetadata,
   PostgresCompanyResolutionStore,
+  PostgresOpportunityResolutionStore,
   PostgresScanLedger,
   PostgresWorkQueue,
   WORK_QUEUE_SCHEDULER_LOCK_KEY,
@@ -56,29 +57,29 @@ try {
   await admin.unsafe(`CREATE DATABASE ${quotedDatabase} TEMPLATE template0`);
 
   const concurrent = await Promise.all([migrate({ databaseUrl: testUrl }), migrate({ databaseUrl: testUrl })]);
-  assert(concurrent.flatMap((result) => result.applied).length === 6, "concurrent migration runners must apply each file once");
-  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 6, "waiting migration runner must verify every applied file");
+  assert(concurrent.flatMap((result) => result.applied).length === 7, "concurrent migration runners must apply each file once");
+  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 7, "waiting migration runner must verify every applied file");
 
   const replay = await migrate({ databaseUrl: testUrl });
-  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 6, "migration replay must be a verified no-op");
+  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 7, "migration replay must be a verified no-op");
 
   const productionDirectory = resolve(import.meta.dir, "../db/migrations");
   const productionMigrations = await loadMigrationFiles(productionDirectory);
-  assert(productionMigrations.length === 6, "all production migrations must exist");
+  assert(productionMigrations.length === 7, "all production migrations must exist");
   upgradeDirectory = await mkdtemp(join(tmpdir(), "career-os-migrations-"));
   for (const migration of productionMigrations) {
     await writeFile(join(upgradeDirectory, migration.name), migration.content, "utf8");
   }
   await writeFile(
-    join(upgradeDirectory, "0007_forward_upgrade_probe.sql"),
+    join(upgradeDirectory, "0008_forward_upgrade_probe.sql"),
     "CREATE TABLE migration_forward_probe (id integer PRIMARY KEY);\n",
     "utf8",
   );
   const upgrade = await migrate({ databaseUrl: testUrl, directory: upgradeDirectory });
-  assert(upgrade.applied.join() === "0007_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
+  assert(upgrade.applied.join() === "0008_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
 
   await writeFile(
-    join(upgradeDirectory, "0008_atomic_failure_probe.sql"),
+    join(upgradeDirectory, "0009_atomic_failure_probe.sql"),
     "CREATE TABLE migration_atomic_failure_probe (id integer PRIMARY KEY);\nSELECT missing_function_for_atomicity_test();\n",
     "utf8",
   );
@@ -91,17 +92,17 @@ try {
   const atomicFailure = await database<{ tableExists: boolean; ledgerRows: number }[]>`
     SELECT
       to_regclass('public.migration_atomic_failure_probe') IS NOT NULL AS "tableExists",
-      (SELECT count(*)::int FROM schema_migrations WHERE name = '0008_atomic_failure_probe.sql') AS "ledgerRows"
+      (SELECT count(*)::int FROM schema_migrations WHERE name = '0009_atomic_failure_probe.sql') AS "ledgerRows"
   `;
   assert(!atomicFailure[0]?.tableExists && atomicFailure[0]?.ledgerRows === 0, "failed migration and ledger write must roll back together");
 
   const originalUpgradeChecksum = (await database<{ checksum: string }[]>`
-    SELECT checksum FROM schema_migrations WHERE name = '0007_forward_upgrade_probe.sql'
+    SELECT checksum FROM schema_migrations WHERE name = '0008_forward_upgrade_probe.sql'
   `)[0]?.checksum;
   assert(originalUpgradeChecksum !== undefined, "forward migration checksum must be recorded");
-  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0007_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0008_forward_upgrade_probe.sql'`;
   await expectRejected(migrate({ databaseUrl: testUrl, directory: upgradeDirectory }), "checksum drift must reject migration startup");
-  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0007_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0008_forward_upgrade_probe.sql'`;
 
   const expectedTables = [
     "artifacts",
@@ -118,9 +119,13 @@ try {
     "listing_versions",
     "opportunities",
     "opportunity_compensation",
+    "opportunity_field_provenance",
+    "opportunity_field_provenance_alternatives",
     "opportunity_languages",
     "opportunity_locations",
     "opportunity_members",
+    "opportunity_resolution_decisions",
+    "opportunity_resolution_fixtures",
     "opportunity_skills",
     "ownership_evidence",
     "resolution_reviews",
@@ -154,8 +159,11 @@ try {
     "opportunities_search_idx",
     "opportunities_title_trgm_idx",
     "opportunity_compensation_filter_idx",
+    "opportunity_field_provenance_history_idx",
     "opportunity_languages_filter_idx",
     "opportunity_locations_country_idx",
+    "opportunity_resolution_decisions_history_idx",
+    "opportunity_resolution_decisions_listing_idx",
     "opportunity_skills_filter_idx",
     "source_scans_history_idx",
     "source_observations_listing_history_idx",
@@ -592,6 +600,26 @@ try {
         fieldPath: "/displayTitle", value: "Verification Engineer", origin: "source_field",
         artifactId: catalogedArtifact.id, locator: { kind: "json_pointer", pointer: "/title" },
         extractorId: "database-verifier", extractorVersion: "1.0.0", confidence: 1,
+      }, {
+        fieldPath: "/normalizedTitle", value: "verification engineer", origin: "source_field",
+        artifactId: catalogedArtifact.id, locator: { kind: "json_pointer", pointer: "/title" },
+        extractorId: "database-verifier", extractorVersion: "1.0.0", confidence: 1,
+      }, {
+        fieldPath: "/descriptionText", value: "Verify durable systems", origin: "source_field",
+        artifactId: catalogedArtifact.id, locator: { kind: "json_pointer", pointer: "/description" },
+        extractorId: "database-verifier", extractorVersion: "1.0.0", confidence: 1,
+      }, {
+        fieldPath: "/workplaceType", value: "remote", origin: "source_field",
+        artifactId: catalogedArtifact.id, locator: { kind: "json_pointer", pointer: "/workplace" },
+        extractorId: "database-verifier", extractorVersion: "1.0.0", confidence: 1,
+      }, {
+        fieldPath: "/canonicalSourceUrl", value: "https://job-boards.greenhouse.io/registry-example/jobs/1", origin: "source_field",
+        artifactId: catalogedArtifact.id, locator: { kind: "json_pointer", pointer: "/absolute_url" },
+        extractorId: "database-verifier", extractorVersion: "1.0.0", confidence: 1,
+      }, {
+        fieldPath: "/applyUrl", value: "https://job-boards.greenhouse.io/registry-example/jobs/1", origin: "source_field",
+        artifactId: catalogedArtifact.id, locator: { kind: "json_pointer", pointer: "/absolute_url" },
+        extractorId: "database-verifier", extractorVersion: "1.0.0", confidence: 1,
       }],
     }],
     byteCount: storedArtifact.byteLength,
@@ -614,9 +642,69 @@ try {
       (SELECT count(*)::int FROM field_assertions WHERE target_type = 'listing_version'
         AND target_id IN (SELECT id FROM listing_versions WHERE source_scan_id = ${scanCommit.scanId})) AS assertions
   `)[0];
-  assert(ledgerCounts?.scans === 1 && ledgerCounts.artifacts === 1 && ledgerCounts.observations === 1 && ledgerCounts.versions === 1 && ledgerCounts.assertions === 1, "duplicate delivery must not duplicate scan or evidence rows");
+  assert(ledgerCounts?.scans === 1 && ledgerCounts.artifacts === 1 && ledgerCounts.observations === 1 && ledgerCounts.versions === 1 && ledgerCounts.assertions === 6, "duplicate delivery must not duplicate scan or evidence rows");
   await expectRejected(database`DELETE FROM source_observations WHERE source_scan_id = ${scanCommit.scanId}`, "source observations must be append-only");
   await expectRejected(database`UPDATE source_scans SET board_hash = ${"tampered"} WHERE id = ${scanCommit.scanId}`, "completed source scans must be immutable");
+
+  const opportunityResolution = new PostgresOpportunityResolutionStore(database);
+  const evidenceRows = await database<{ assertionId: string; listingId: string }[]>`SELECT assertion.id AS "assertionId",
+      version.source_listing_id AS "listingId" FROM field_assertions assertion
+    JOIN listing_versions version ON version.id = assertion.target_id
+    WHERE assertion.target_type = 'listing_version' AND version.source_scan_id = ${scanCommit.scanId} ORDER BY assertion.id`;
+  const opportunityCommand = {
+    companyId: verified.companyId,
+    sourceListingId: evidenceRows[0]!.listingId,
+    assertionIds: evidenceRows.map((row) => row.assertionId),
+    firstSeenAt: scanEnded.toISOString(),
+    fixtureKey: `opportunity-create:${evidenceRows[0]!.listingId}`,
+    fixtureInput: { sourceListingId: evidenceRows[0]!.listingId, assertionIds: evidenceRows.map((row) => row.assertionId).sort() },
+    reason: "Deterministically project the verified source listing",
+  };
+  const createdOpportunity = await opportunityResolution.create(
+    { actorId: "opportunity-verifier", actorType: "system", idempotencyKey: "opportunity-create-0001" }, opportunityCommand,
+  ) as { opportunityId: string; decisionId: string };
+  const replayedOpportunity = await opportunityResolution.create(
+    { actorId: "opportunity-verifier", actorType: "system", idempotencyKey: "opportunity-create-0001" }, opportunityCommand,
+  ) as { opportunityId: string; decisionId: string };
+  assert(createdOpportunity.opportunityId === replayedOpportunity.opportunityId
+    && createdOpportunity.decisionId === replayedOpportunity.decisionId, "opportunity creation must replay its stored response");
+  const firstProjection = (await database<{ displayTitle: string; provenance: number; selected: number }[]>`SELECT
+      opportunity.display_title AS "displayTitle",
+      (SELECT count(*)::int FROM opportunity_field_provenance WHERE decision_id = ${createdOpportunity.decisionId}) AS provenance,
+      (SELECT count(*)::int FROM field_assertions WHERE target_type = 'opportunity' AND target_id = opportunity.id AND selected) AS selected
+    FROM opportunities opportunity WHERE opportunity.id = ${createdOpportunity.opportunityId}`)[0];
+  assert(firstProjection?.displayTitle === "Verification Engineer" && firstProjection.provenance === 6 && firstProjection.selected === 6,
+    "every required displayed opportunity field must retain selected source provenance");
+  const rebuilt = await opportunityResolution.rebuild(
+    { actorId: "opportunity-verifier", actorType: "system", idempotencyKey: "opportunity-rebuild-0001" },
+    { opportunityId: createdOpportunity.opportunityId, fixtureKey: `opportunity-rebuild:${createdOpportunity.opportunityId}`,
+      fixtureInput: { opportunityId: createdOpportunity.opportunityId }, reason: "Verify deterministic projection replay from assertions" },
+  ) as { decisionId: string; projection: unknown };
+  const rebuildProjection = (await database<{ provenance: number; selected: number; decisions: number; fixtures: number }[]>`SELECT
+      (SELECT count(*)::int FROM opportunity_field_provenance WHERE decision_id = ${rebuilt.decisionId}) AS provenance,
+      (SELECT count(*)::int FROM field_assertions WHERE target_type = 'opportunity' AND target_id = ${createdOpportunity.opportunityId} AND selected) AS selected,
+      (SELECT count(*)::int FROM opportunity_resolution_decisions WHERE opportunity_id = ${createdOpportunity.opportunityId}) AS decisions,
+      (SELECT count(*)::int FROM opportunity_resolution_fixtures WHERE decision_id IN
+        (SELECT id FROM opportunity_resolution_decisions WHERE opportunity_id = ${createdOpportunity.opportunityId})) AS fixtures`)[0];
+  assert(rebuildProjection?.provenance === 6 && rebuildProjection.selected === 6 && rebuildProjection.decisions === 2 && rebuildProjection.fixtures === 2,
+    "rebuild must replace selected projections while retaining immutable provenance history and fixtures");
+  await opportunityResolution.split(
+    { actorId: "opportunity-operator", actorType: "operator", idempotencyKey: "opportunity-split-0001" },
+    { opportunityId: createdOpportunity.opportunityId, sourceListingId: evidenceRows[0]!.listingId,
+      fixtureKey: `opportunity-split:${evidenceRows[0]!.listingId}`, fixtureInput: { sourceListingId: evidenceRows[0]!.listingId },
+      reason: "Operator reverses the opportunity membership fixture" },
+  );
+  const splitState = (await database<{ state: string; status: string; decisions: number }[]>`SELECT member.state,
+      opportunity.status, (SELECT count(*)::int FROM opportunity_resolution_decisions
+        WHERE opportunity_id = ${createdOpportunity.opportunityId}) AS decisions
+    FROM opportunity_members member JOIN opportunities opportunity ON opportunity.id = member.opportunity_id
+    WHERE member.opportunity_id = ${createdOpportunity.opportunityId} AND member.source_listing_id = ${evidenceRows[0]!.listingId}`)[0];
+  assert(splitState?.state === "human_rejected" && splitState.status === "closed" && splitState.decisions === 3,
+    "split must preserve the membership and opportunity while making the active projection reversible");
+  await expectRejected(database`DELETE FROM opportunity_resolution_decisions WHERE id = ${createdOpportunity.decisionId}`,
+    "opportunity decisions must be append-only");
+  await expectRejected(database`UPDATE opportunity_field_provenance SET projected_value_json = ${"null"}::jsonb
+    WHERE decision_id = ${createdOpportunity.decisionId}`, "opportunity provenance must be immutable");
 
   const failedJobId = crypto.randomUUID();
   await database`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at, max_attempts)
@@ -660,7 +748,7 @@ try {
   `)[0];
   assert(deletedArtifact?.state === "deleted" && deletedArtifact.deletedAt !== null, "retention must preserve deleted metadata as a tombstone");
 
-  console.log("Database verification passed: migrations, registry governance, reversible company resolution, queue fencing, scan ledger idempotency, and artifact retention reconciliation.");
+  console.log("Database verification passed: migrations, registry governance, reversible company and opportunity resolution, provenance projection, queue fencing, scan ledger idempotency, and artifact retention reconciliation.");
 } finally {
   if (database) await database.close();
   if (upgradeDirectory) await rm(upgradeDirectory, { recursive: true, force: true });
