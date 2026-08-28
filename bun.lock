@@ -96,6 +96,7 @@
         "@career-os/company-resolver": "workspace:*",
         "@career-os/contracts": "workspace:*",
         "@career-os/discovery-domain": "workspace:*",
+        "@career-os/lifecycle": "workspace:*",
         "@career-os/opportunity-resolver": "workspace:*",
       },
     },
@@ -105,6 +106,10 @@
       "dependencies": {
         "@career-os/contracts": "workspace:*",
       },
+    },
+    "packages/lifecycle": {
+      "name": "@career-os/lifecycle",
+      "version": "0.0.0",
     },
     "packages/model-gateway": {
       "name": "@career-os/model-gateway",
@@ -156,6 +161,8 @@
     "@career-os/db": ["@career-os/db@workspace:packages/db"],
 
     "@career-os/discovery-domain": ["@career-os/discovery-domain@workspace:packages/discovery-domain"],
+
+    "@career-os/lifecycle": ["@career-os/lifecycle@workspace:packages/lifecycle"],
 
     "@career-os/model-gateway": ["@career-os/model-gateway@workspace:packages/model-gateway"],
 
