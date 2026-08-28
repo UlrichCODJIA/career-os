@@ -1,0 +1,49 @@
+{
+  "formatVersion": 1,
+  "connectorId": "lever",
+  "connectorVersion": "1.0.0",
+  "provenance": {
+    "source": "synthetic Lever Postings API contract corpus based on official public documentation",
+    "capturedAt": "2026-08-28T00:00:00.000Z",
+    "licenseReviewed": true,
+    "sanitized": true
+  },
+  "cases": [
+    {
+      "formatVersion": 1,
+      "caseId": "lever-valid-enumeration",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"lever-list","path":"list-valid.json","sourceUrl":"https://api.lever.co/v0/postings/acme?mode=json&skip=0&limit=100","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[{"sourceJobId":"11111111-2222-4333-8444-555555555555","detailUrl":"https://api.lever.co/v0/postings/acme/11111111-2222-4333-8444-555555555555","canonicalSourceUrl":"https://jobs.lever.co/acme/11111111-2222-4333-8444-555555555555","applyUrl":"https://jobs.lever.co/acme/11111111-2222-4333-8444-555555555555/apply","lightweightFingerprint":"727827f42b990aefed378f8988f93778279833cf525bd647e364f9446059246c","artifactId":"lever-list"}],"complete":true,"completenessReason":"complete","responseArtifacts":["lever-list"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "lever-empty-first-page-is-suspicious",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"lever-empty","path":"list-empty.json","sourceUrl":"https://api.lever.co/v0/postings/acme?mode=json&skip=0&limit=100","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[],"complete":false,"completenessReason":"suspicious_empty","responseArtifacts":["lever-empty"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "lever-schema-drift",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"lever-drift","path":"list-schema-drift.json","sourceUrl":"https://api.lever.co/v0/postings/acme?mode=json&skip=0&limit=100","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[],"complete":false,"completenessReason":"schema_invalid","responseArtifacts":["lever-drift"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "lever-malformed",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"lever-malformed","path":"list-malformed.json","sourceUrl":"https://api.lever.co/v0/postings/acme?mode=json&skip=0&limit=100","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"error","code":"invalid_json"}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "lever-valid-hostile-detail",
+      "operation": "listing",
+      "artifacts": [{"artifactId":"lever-detail","path":"detail-valid-hostile.json","sourceUrl":"https://api.lever.co/v0/postings/acme/11111111-2222-4333-8444-555555555555","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "item": {"sourceJobId":"11111111-2222-4333-8444-555555555555","detailUrl":"https://api.lever.co/v0/postings/acme/11111111-2222-4333-8444-555555555555","canonicalSourceUrl":"https://jobs.lever.co/acme/11111111-2222-4333-8444-555555555555","applyUrl":"https://jobs.lever.co/acme/11111111-2222-4333-8444-555555555555/apply","lightweightFingerprint":"727827f42b990aefed378f8988f93778279833cf525bd647e364f9446059246c","artifactId":"lever-list"},
+      "expected": {"kind":"result","value":{"sourceJobId":"11111111-2222-4333-8444-555555555555","sourcePostedAt":"2026-08-27T12:30:00.000Z","title":{"value":"Senior Platform Engineer","origin":"source_field","artifactId":"lever-detail","locator":{"kind":"json_pointer","pointer":"/text"},"extractorId":"lever","extractorVersion":"1.0.0","confidence":1},"descriptionHtml":{"value":"About<br>Build &amp; ship","origin":"deterministic_rule","artifactId":"lever-detail","locator":{"kind":"json_pointer","pointer":"/description"},"extractorId":"lever","extractorVersion":"1.0.0","confidence":0.99},"descriptionText":{"value":"About\nBuild & ship","origin":"deterministic_rule","artifactId":"lever-detail","locator":{"kind":"json_pointer","pointer":"/description"},"extractorId":"lever","extractorVersion":"1.0.0","confidence":0.99},"locations":{"value":[{"label":"Remote - US","countryCode":"US"},{"label":"New York, NY","countryCode":"US"}],"origin":"deterministic_rule","artifactId":"lever-detail","locator":{"kind":"json_pointer","pointer":"/categories/allLocations"},"extractorId":"lever","extractorVersion":"1.0.0","confidence":0.99},"workplaceType":{"value":"remote","origin":"source_field","artifactId":"lever-detail","locator":{"kind":"json_pointer","pointer":"/workplaceType"},"extractorId":"lever","extractorVersion":"1.0.0","confidence":1},"employmentType":{"value":"Full-time","origin":"source_field","artifactId":"lever-detail","locator":{"kind":"json_pointer","pointer":"/categories/commitment"},"extractorId":"lever","extractorVersion":"1.0.0","confidence":1},"compensation":{"value":{"rawText":"USD 120000–150000 (per-year-salary)","minimum":120000,"maximum":150000,"currency":"USD","period":"year"},"origin":"deterministic_rule","artifactId":"lever-detail","locator":{"kind":"json_pointer","pointer":"/salaryRange"},"extractorId":"lever","extractorVersion":"1.0.0","confidence":0.99},"department":{"value":"Engineering","origin":"source_field","artifactId":"lever-detail","locator":{"kind":"json_pointer","pointer":"/categories/department"},"extractorId":"lever","extractorVersion":"1.0.0","confidence":1},"team":{"value":"Platform","origin":"source_field","artifactId":"lever-detail","locator":{"kind":"json_pointer","pointer":"/categories/team"},"extractorId":"lever","extractorVersion":"1.0.0","confidence":1},"applyUrl":{"value":"https://jobs.lever.co/acme/11111111-2222-4333-8444-555555555555/apply","origin":"source_field","artifactId":"lever-detail","locator":{"kind":"json_pointer","pointer":"/applyUrl"},"extractorId":"lever","extractorVersion":"1.0.0","confidence":1},"canonicalSourceUrl":{"value":"https://jobs.lever.co/acme/11111111-2222-4333-8444-555555555555","origin":"source_field","artifactId":"lever-detail","locator":{"kind":"json_pointer","pointer":"/hostedUrl"},"extractorId":"lever","extractorVersion":"1.0.0","confidence":1}}}
+    }
+  ]
+}

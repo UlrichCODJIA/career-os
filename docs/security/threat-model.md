@@ -1,6 +1,6 @@
 # Threat-Model Baseline
 
-**Status:** architecture baseline; controls for T01, T02, T09, T16, the connector-SDK and Greenhouse-source portions of T04/T05/T06/T08/T12, and the authentication portion of T11 are implemented and tested, while later-workstream controls remain planned
+**Status:** architecture baseline; controls for T01, T02, T09, T16, the connector-SDK and Greenhouse/Lever-source portions of T04/T05/T06/T08/T12, and the authentication portion of T11 are implemented and tested, while later-workstream controls remain planned
 
 **Repository scope:** `UlrichCODJIA/career-os`
 
@@ -52,6 +52,8 @@ DSV-009 implements T01's application egress boundary in `@career-os/safe-fetch`:
 DSV-010 implements the connector-SDK portions of T04, T06, T08, and T12. Strict runtime contracts bind connector identity/version, completeness, response artifacts, and required listing evidence. Only a fully validated, internally consistent complete enumeration can support absence inference. Parsing applies hard byte/depth/node/string ceilings and fatal UTF-8 decoding; untrusted HTML is reduced to plaintext plus escaped no-active-markup display HTML. Versioned, provenance-reviewed frozen fixtures cover malformed, partial, suspicious-empty, oversized, hostile, and schema-drift inputs, while bounded shadow diffs compare releases without canonical mutation. Application composition, concrete ATS connectors, lifecycle circuit breakers, and safe viewers remain separate delivery gates. See [Connector SDK and release contract](../architecture/connector-sdk.md).
 
 DSV-011 implements the Greenhouse-source portions of T04, T05, and T08. It binds approved board tokens to the fixed public API host, validates exact artifact endpoints and hosted-board tenant identity, treats empty/count-mismatched/duplicate/cross-tenant/schema-invalid scans as incomplete, and sanitizes entity-encoded description HTML before emitting artifact-backed evidence. It deliberately omits applicant-question expansion. Registry ownership review, multi-scan closure state, fleet circuit breakers, and UI safe-viewer enforcement remain application-level delivery gates. See [Greenhouse connector](../architecture/greenhouse-connector.md).
+
+DSV-012 implements the Lever-source portions of T04, T05, and T08. It binds each approved site to exactly one global or EU API/hosted-board pair, accepts only exact public Posting API list/detail paths, uses bounded 100-record skip cursors, and requires a contiguous artifact chain from skip zero before a terminal page can prove completeness. Suspicious first-page emptiness, missing/out-of-order pages, duplicates, cross-region URLs, malformed identity, schema drift, and the 10,000-listing SDK artifact ceiling fail closed. Hosted description HTML is sanitized before emitting artifact-backed evidence; only hosted application links are preserved and no application API is invoked. Registry ownership review, lifecycle circuit breakers, and UI safe viewers remain application-level gates. See [Lever connector](../architecture/lever-connector.md).
 
 ## Release gates
 

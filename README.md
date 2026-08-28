@@ -2,7 +2,7 @@
 
 Career OS is an open-source, provider-neutral system for the complete journey from job discovery to application, interview, offer, and outcome learning.
 
-> **Status:** executable Discovery foundation. The local profile, durable queue/artifact boundaries, fail-closed API authentication, supply-chain provenance, SSRF-resistant safe-fetch client, versioned connector SDK/fixture harness, and first production-grade Greenhouse connector are available.
+> **Status:** executable Discovery foundation. The local profile, durable queue/artifact boundaries, fail-closed API authentication, supply-chain provenance, SSRF-resistant safe-fetch client, versioned connector SDK/fixture harness, and production-grade Greenhouse plus global/EU Lever connectors are available.
 
 ## Principles
 
@@ -25,7 +25,7 @@ scripts/                 Repository verification
 tests/                   Cross-cutting tests and future fixtures
 ```
 
-DSV-002 turns the repository boundary into executable Bun workspaces and local infrastructure without importing either legacy repository as a runtime dependency. DSV-003 adds explicit loopback, container-loopback, and remote API profiles with one HTTP/WebSocket principal model, role checks, exact-origin validation, cookie-mode CSRF protection, and TLS/trusted-proxy validation. DSV-004 adds secretless pull-request checks, migration and dependency validation, secret scanning, SBOM artifacts, and main-only build attestation. DSV-009 adds policy-scoped HTTPS retrieval with DNS and peer-address pinning, every-redirect revalidation, resource budgets, restricted headers, and redacted per-hop decisions while connectors remain network-free parsers. DSV-010 adds strict detection/enumeration/listing contracts, artifact-backed evidence, fail-closed completeness semantics, bounded parsing and sanitization, versioned frozen fixtures, and shadow diffs. DSV-011 adds Greenhouse detection, complete-board enumeration, detail parsing, stable source identity, pay-transparency extraction, hostile-content sanitization, and explainable shadow-version output.
+DSV-002 turns the repository boundary into executable Bun workspaces and local infrastructure without importing either legacy repository as a runtime dependency. DSV-003 adds explicit loopback, container-loopback, and remote API profiles with one HTTP/WebSocket principal model, role checks, exact-origin validation, cookie-mode CSRF protection, and TLS/trusted-proxy validation. DSV-004 adds secretless pull-request checks, migration and dependency validation, secret scanning, SBOM artifacts, and main-only build attestation. DSV-009 adds policy-scoped HTTPS retrieval with DNS and peer-address pinning, every-redirect revalidation, resource budgets, restricted headers, and redacted per-hop decisions while connectors remain network-free parsers. DSV-010 adds strict detection/enumeration/listing contracts, artifact-backed evidence, fail-closed completeness semantics, bounded parsing and sanitization, versioned frozen fixtures, and shadow diffs. DSV-011 adds Greenhouse detection, complete-board enumeration, detail parsing, stable source identity, pay-transparency extraction, hostile-content sanitization, and explainable shadow-version output. DSV-012 adds region-bound Lever detection, bounded skip/limit pagination, exact global/EU identity, stable posting provenance, structured workplace/compensation fields, and terminal-page completeness.
 
 ## Development baseline
 
@@ -50,6 +50,7 @@ For the complete local profile, see [Local development](docs/development/local-p
 - [Module boundaries](docs/architecture/module-boundaries.md)
 - [Connector SDK and release contract](docs/architecture/connector-sdk.md)
 - [Greenhouse connector](docs/architecture/greenhouse-connector.md)
+- [Lever connector](docs/architecture/lever-connector.md)
 - [Architecture decisions](docs/architecture/decisions/)
 - [Reference-source provenance](docs/reference-sources.md)
 - [Threat-model baseline](docs/security/threat-model.md)
