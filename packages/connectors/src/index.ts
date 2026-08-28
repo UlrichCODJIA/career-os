@@ -1,3 +1,4 @@
 export * from "./greenhouse.ts";
+export * from "./lever.ts";
 
-export const enabledConnectorIds = ["greenhouse"] as const;
+export const enabledConnectorIds = ["greenhouse", "lever"] as const;
