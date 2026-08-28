@@ -1,0 +1,56 @@
+{
+  "formatVersion": 1,
+  "connectorId": "greenhouse",
+  "connectorVersion": "1.0.0",
+  "provenance": {
+    "source": "synthetic Greenhouse Job Board API contract corpus based on official public documentation",
+    "capturedAt": "2026-08-28T00:00:00.000Z",
+    "licenseReviewed": true,
+    "sanitized": true
+  },
+  "cases": [
+    {
+      "formatVersion": 1,
+      "caseId": "greenhouse-valid-enumeration",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"gh-list","path":"list-valid.json","sourceUrl":"https://boards-api.greenhouse.io/v1/boards/acme/jobs","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[{"sourceJobId":"101","detailUrl":"https://boards-api.greenhouse.io/v1/boards/acme/jobs/101?pay_transparency=true","canonicalSourceUrl":"https://job-boards.greenhouse.io/acme/jobs/101","applyUrl":"https://job-boards.greenhouse.io/acme/jobs/101","lightweightFingerprint":"700964b5f7340f5d89c61911839ab3c10b1726401a740ed6c939f3cdb65db331","sourceUpdatedAt":"2026-08-27T12:30:00Z","artifactId":"gh-list"}],"complete":true,"completenessReason":"complete","responseArtifacts":["gh-list"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "greenhouse-empty-is-suspicious",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"gh-empty","path":"list-empty.json","sourceUrl":"https://boards-api.greenhouse.io/v1/boards/acme/jobs","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[],"complete":false,"completenessReason":"suspicious_empty","responseArtifacts":["gh-empty"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "greenhouse-count-mismatch",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"gh-count","path":"list-count-mismatch.json","sourceUrl":"https://boards-api.greenhouse.io/v1/boards/acme/jobs","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[{"sourceJobId":"101","detailUrl":"https://boards-api.greenhouse.io/v1/boards/acme/jobs/101?pay_transparency=true","canonicalSourceUrl":"https://job-boards.greenhouse.io/acme/jobs/101","applyUrl":"https://job-boards.greenhouse.io/acme/jobs/101","lightweightFingerprint":"700964b5f7340f5d89c61911839ab3c10b1726401a740ed6c939f3cdb65db331","sourceUpdatedAt":"2026-08-27T12:30:00Z","artifactId":"gh-count"}],"complete":false,"completenessReason":"schema_invalid","responseArtifacts":["gh-count"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "greenhouse-schema-drift",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"gh-drift","path":"list-schema-drift.json","sourceUrl":"https://boards-api.greenhouse.io/v1/boards/acme/jobs","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"result","value":{"listings":[],"complete":false,"completenessReason":"schema_invalid","responseArtifacts":["gh-drift"],"connectorVersion":"1.0.0"}}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "greenhouse-malformed",
+      "operation": "enumeration",
+      "artifacts": [{"artifactId":"gh-malformed","path":"list-malformed.json","sourceUrl":"https://boards-api.greenhouse.io/v1/boards/acme/jobs","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "expected": {"kind":"error","code":"invalid_json"}
+    },
+    {
+      "formatVersion": 1,
+      "caseId": "greenhouse-valid-hostile-detail",
+      "operation": "listing",
+      "artifacts": [{"artifactId":"gh-detail","path":"detail-valid-hostile.json","sourceUrl":"https://boards-api.greenhouse.io/v1/boards/acme/jobs/101?pay_transparency=true","contentType":"application/json","fetchedAt":"2026-08-28T00:00:00.000Z"}],
+      "item": {"sourceJobId":"101","detailUrl":"https://boards-api.greenhouse.io/v1/boards/acme/jobs/101?pay_transparency=true","canonicalSourceUrl":"https://job-boards.greenhouse.io/acme/jobs/101","applyUrl":"https://job-boards.greenhouse.io/acme/jobs/101","lightweightFingerprint":"700964b5f7340f5d89c61911839ab3c10b1726401a740ed6c939f3cdb65db331","sourceUpdatedAt":"2026-08-27T12:30:00Z","artifactId":"gh-list"},
+      "expected": {"kind":"result","value":{"sourceJobId":"101","sourcePostedAt":"2026-08-20T08:00:00Z","sourceUpdatedAt":"2026-08-27T12:30:00Z","validThrough":"2026-10-01T00:00:00Z","title":{"value":"Senior Platform Engineer","origin":"source_field","artifactId":"gh-detail","locator":{"kind":"json_pointer","pointer":"/title"},"extractorId":"greenhouse","extractorVersion":"1.0.0","confidence":1},"descriptionHtml":{"value":"About<br>Build &amp; ship","origin":"deterministic_rule","artifactId":"gh-detail","locator":{"kind":"json_pointer","pointer":"/content"},"extractorId":"greenhouse","extractorVersion":"1.0.0","confidence":0.99},"descriptionText":{"value":"About\nBuild & ship","origin":"deterministic_rule","artifactId":"gh-detail","locator":{"kind":"json_pointer","pointer":"/content"},"extractorId":"greenhouse","extractorVersion":"1.0.0","confidence":0.99},"locations":{"value":[{"label":"Remote - US"}],"origin":"deterministic_rule","artifactId":"gh-detail","locator":{"kind":"json_pointer","pointer":"/location/name"},"extractorId":"greenhouse","extractorVersion":"1.0.0","confidence":0.99},"department":{"value":"Engineering","origin":"source_field","artifactId":"gh-detail","locator":{"kind":"json_pointer","pointer":"/departments/0/name"},"extractorId":"greenhouse","extractorVersion":"1.0.0","confidence":1},"compensation":{"value":{"rawText":"US salary range: USD 120000.00–150000.00","minimum":120000,"maximum":150000,"currency":"USD","period":"unknown"},"origin":"deterministic_rule","artifactId":"gh-detail","locator":{"kind":"json_pointer","pointer":"/pay_input_ranges/0"},"extractorId":"greenhouse","extractorVersion":"1.0.0","confidence":0.99},"applyUrl":{"value":"https://job-boards.greenhouse.io/acme/jobs/101","origin":"source_field","artifactId":"gh-detail","locator":{"kind":"json_pointer","pointer":"/absolute_url"},"extractorId":"greenhouse","extractorVersion":"1.0.0","confidence":1},"canonicalSourceUrl":{"value":"https://job-boards.greenhouse.io/acme/jobs/101","origin":"source_field","artifactId":"gh-detail","locator":{"kind":"json_pointer","pointer":"/absolute_url"},"extractorId":"greenhouse","extractorVersion":"1.0.0","confidence":1}}}
+    }
+  ]
+}
