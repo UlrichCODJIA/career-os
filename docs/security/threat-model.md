@@ -1,6 +1,6 @@
 # Threat-Model Baseline
 
-**Status:** architecture baseline; controls for T01, T02, T09, T12, T16, and the authentication portion of T11 are implemented and tested, while later-workstream controls remain planned
+**Status:** architecture baseline; controls for T01, T02, T09, T16, the connector-SDK portions of T04/T06/T08/T12, and the authentication portion of T11 are implemented and tested, while later-workstream controls remain planned
 
 **Repository scope:** `UlrichCODJIA/career-os`
 
@@ -48,6 +48,8 @@ DSV-003 implements validated `loopback`, `container-loopback`, and `remote` API 
 This does not mark all of T11 complete. Durable domain mutations, idempotency storage, and append-only audit events arrive with their owning database and operator workstreams.
 
 DSV-009 implements T01's application egress boundary in `@career-os/safe-fetch`: policy-owned host allowlists, strict public-address DNS sets, pinned connections, TLS hostname verification, connected-peer checks, manual every-hop redirect validation, and no ambient proxy inheritance. Fixed request, concurrency, timeout, wire-byte, decoded-byte, encoding, and media-type limits cover its T12 scope. Redacted decision schemas and telemetry canaries cover the URL/egress portion of T10. Connectors and their SDK remain pure and cannot import networking or safe-fetch authority. See [Safe fetch boundary](safe-fetch.md).
+
+DSV-010 implements the connector-SDK portions of T04, T06, T08, and T12. Strict runtime contracts bind connector identity/version, completeness, response artifacts, and required listing evidence. Only a fully validated, internally consistent complete enumeration can support absence inference. Parsing applies hard byte/depth/node/string ceilings and fatal UTF-8 decoding; untrusted HTML is reduced to plaintext plus escaped no-active-markup display HTML. Versioned, provenance-reviewed frozen fixtures cover malformed, partial, suspicious-empty, oversized, hostile, and schema-drift inputs, while bounded shadow diffs compare releases without canonical mutation. Application composition, concrete ATS connectors, lifecycle circuit breakers, and safe viewers remain separate delivery gates. See [Connector SDK and release contract](../architecture/connector-sdk.md).
 
 ## Release gates
 
