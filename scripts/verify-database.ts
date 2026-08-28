@@ -7,6 +7,7 @@ import {
   migrate,
   PostgresRegistryStore,
   PostgresArtifactMetadata,
+  PostgresScanLedger,
   PostgresWorkQueue,
   WORK_QUEUE_SCHEDULER_LOCK_KEY,
 } from "../packages/db/src/index.ts";
@@ -54,29 +55,29 @@ try {
   await admin.unsafe(`CREATE DATABASE ${quotedDatabase} TEMPLATE template0`);
 
   const concurrent = await Promise.all([migrate({ databaseUrl: testUrl }), migrate({ databaseUrl: testUrl })]);
-  assert(concurrent.flatMap((result) => result.applied).length === 4, "concurrent migration runners must apply each file once");
-  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 4, "waiting migration runner must verify every applied file");
+  assert(concurrent.flatMap((result) => result.applied).length === 5, "concurrent migration runners must apply each file once");
+  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 5, "waiting migration runner must verify every applied file");
 
   const replay = await migrate({ databaseUrl: testUrl });
-  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 4, "migration replay must be a verified no-op");
+  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 5, "migration replay must be a verified no-op");
 
   const productionDirectory = resolve(import.meta.dir, "../db/migrations");
   const productionMigrations = await loadMigrationFiles(productionDirectory);
-  assert(productionMigrations.length === 4, "all production migrations must exist");
+  assert(productionMigrations.length === 5, "all production migrations must exist");
   upgradeDirectory = await mkdtemp(join(tmpdir(), "career-os-migrations-"));
   for (const migration of productionMigrations) {
     await writeFile(join(upgradeDirectory, migration.name), migration.content, "utf8");
   }
   await writeFile(
-    join(upgradeDirectory, "0005_forward_upgrade_probe.sql"),
+    join(upgradeDirectory, "0006_forward_upgrade_probe.sql"),
     "CREATE TABLE migration_forward_probe (id integer PRIMARY KEY);\n",
     "utf8",
   );
   const upgrade = await migrate({ databaseUrl: testUrl, directory: upgradeDirectory });
-  assert(upgrade.applied.join() === "0005_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
+  assert(upgrade.applied.join() === "0006_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
 
   await writeFile(
-    join(upgradeDirectory, "0006_atomic_failure_probe.sql"),
+    join(upgradeDirectory, "0007_atomic_failure_probe.sql"),
     "CREATE TABLE migration_atomic_failure_probe (id integer PRIMARY KEY);\nSELECT missing_function_for_atomicity_test();\n",
     "utf8",
   );
@@ -89,17 +90,17 @@ try {
   const atomicFailure = await database<{ tableExists: boolean; ledgerRows: number }[]>`
     SELECT
       to_regclass('public.migration_atomic_failure_probe') IS NOT NULL AS "tableExists",
-      (SELECT count(*)::int FROM schema_migrations WHERE name = '0006_atomic_failure_probe.sql') AS "ledgerRows"
+      (SELECT count(*)::int FROM schema_migrations WHERE name = '0007_atomic_failure_probe.sql') AS "ledgerRows"
   `;
   assert(!atomicFailure[0]?.tableExists && atomicFailure[0]?.ledgerRows === 0, "failed migration and ledger write must roll back together");
 
   const originalUpgradeChecksum = (await database<{ checksum: string }[]>`
-    SELECT checksum FROM schema_migrations WHERE name = '0005_forward_upgrade_probe.sql'
+    SELECT checksum FROM schema_migrations WHERE name = '0006_forward_upgrade_probe.sql'
   `)[0]?.checksum;
   assert(originalUpgradeChecksum !== undefined, "forward migration checksum must be recorded");
-  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0005_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0006_forward_upgrade_probe.sql'`;
   await expectRejected(migrate({ databaseUrl: testUrl, directory: upgradeDirectory }), "checksum drift must reject migration startup");
-  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0005_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0006_forward_upgrade_probe.sql'`;
 
   const expectedTables = [
     "artifacts",
@@ -121,7 +122,9 @@ try {
     "schema_migrations",
     "source_candidates",
     "source_listings",
+    "source_observations",
     "source_policies",
+    "source_scan_artifacts",
     "source_scans",
     "sources",
     "work_jobs",
@@ -147,6 +150,8 @@ try {
     "opportunity_locations_country_idx",
     "opportunity_skills_filter_idx",
     "source_scans_history_idx",
+    "source_observations_listing_history_idx",
+    "source_scan_artifacts_artifact_idx",
     "sources_due_idx",
     "work_jobs_active_dedupe_uq",
     "work_jobs_queue_idx",
@@ -457,6 +462,91 @@ try {
     SELECT canonical_source_url AS url, response_headers AS headers FROM artifacts WHERE id = ${catalogedArtifact.id}
   `)[0];
   assert(persistedMetadata !== undefined && !JSON.stringify(persistedMetadata).includes("must-not-persist"), "artifact metadata must not persist credential canaries");
+
+  const scanJobId = crypto.randomUUID();
+  await database`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at)
+    VALUES (${scanJobId}, ${"scan_source"}, ${`scan-verification:${scanJobId}`}, ${"{}"}::text::jsonb, ${"queued"}, ${queueTime.value})`;
+  const scanLease = (await firstQueue.claim("scan-ledger-worker"))[0];
+  assert(scanLease?.id === scanJobId, "scan ledger fixture must be leased");
+  const scanLedger = new PostgresScanLedger(database, { random: () => 0 });
+  const scanStarted = new Date(queueTime.value.getTime() - 200);
+  const scanEnded = new Date(queueTime.value.getTime() - 100);
+  const completeScanInput: Parameters<PostgresScanLedger["commit"]>[0] = {
+    lease: scanLease,
+    workerId: "scan-ledger-worker",
+    sourceId: verified.sourceId,
+    startedAt: scanStarted,
+    endedAt: scanEnded,
+    connectorId: "greenhouse",
+    connectorVersion: "1.0.0",
+    safeFetchPolicyVersion: "1.0.0",
+    policyId: policyResult.policy.id,
+    fetchMetadata: { requestCount: 1, decisionsRecorded: true },
+    completenessReason: "complete",
+    responseArtifactIds: [catalogedArtifact.id],
+    observations: [{
+      sourceJobId: "verification-job-1",
+      canonicalSourceUrl: "https://job-boards.greenhouse.io/registry-example/jobs/1",
+      applyUrl: "https://job-boards.greenhouse.io/registry-example/jobs/1",
+      artifactId: catalogedArtifact.id,
+      semanticFingerprint: "semantic-v1",
+      rawFingerprint: storedArtifact.digest,
+      parsedSource: { title: { value: "Verification Engineer", artifactId: catalogedArtifact.id } },
+      normalizedCandidate: { title: "Verification Engineer" },
+      parserVersion: "1.0.0",
+      normalizerVersion: "1.0.0",
+      taxonomyVersion: "1.0.0",
+    }],
+    byteCount: storedArtifact.byteLength,
+    boardHash: "board-v1",
+  };
+  const scanCommit = await scanLedger.commit(completeScanInput);
+  assert(!scanCommit.replayed && scanCommit.observationCount === 1 && scanCommit.versionCount === 1, "first scan delivery must atomically persist one observation and version");
+  const replayedScan = await scanLedger.commit(completeScanInput);
+  assert(replayedScan.replayed && replayedScan.scanId === scanCommit.scanId && replayedScan.observationCount === 1, "duplicate delivery after commit must replay the durable attempt without requiring a live lease");
+  await expectRejected(
+    scanLedger.commit({ ...completeScanInput, boardHash: "tampered-replay" }),
+    "a duplicate delivery with different content must be rejected",
+  );
+  const ledgerCounts = (await database<{ scans: number; artifacts: number; observations: number; versions: number }[]>`
+    SELECT
+      (SELECT count(*)::int FROM source_scans WHERE work_job_id = ${scanJobId}) AS scans,
+      (SELECT count(*)::int FROM source_scan_artifacts WHERE source_scan_id = ${scanCommit.scanId}) AS artifacts,
+      (SELECT count(*)::int FROM source_observations WHERE source_scan_id = ${scanCommit.scanId}) AS observations,
+      (SELECT count(*)::int FROM listing_versions WHERE source_scan_id = ${scanCommit.scanId}) AS versions
+  `)[0];
+  assert(ledgerCounts?.scans === 1 && ledgerCounts.artifacts === 1 && ledgerCounts.observations === 1 && ledgerCounts.versions === 1, "duplicate delivery must not duplicate any scan ledger row");
+  await expectRejected(database`DELETE FROM source_observations WHERE source_scan_id = ${scanCommit.scanId}`, "source observations must be append-only");
+  await expectRejected(database`UPDATE source_scans SET board_hash = ${"tampered"} WHERE id = ${scanCommit.scanId}`, "completed source scans must be immutable");
+
+  const failedJobId = crypto.randomUUID();
+  await database`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at, max_attempts)
+    VALUES (${failedJobId}, ${"scan_source"}, ${`scan-failure:${failedJobId}`}, ${"{}"}::text::jsonb, ${"queued"}, ${queueTime.value}, ${2})`;
+  const failedLease = (await firstQueue.claim("scan-failure-worker"))[0];
+  assert(failedLease?.id === failedJobId, "failed scan fixture must be leased");
+  await scanLedger.fail({
+    lease: failedLease, workerId: "scan-failure-worker", sourceId: verified.sourceId,
+    startedAt: scanEnded, endedAt: queueTime.value, connectorId: "greenhouse", connectorVersion: "1.0.0",
+    safeFetchPolicyVersion: "1.0.0", policyId: policyResult.policy.id, fetchMetadata: { requestCount: 0 },
+    reason: "transport_failure", errorCode: "upstream_timeout", retryable: true,
+  });
+  const retryLease = (await firstQueue.claim("scan-retry-worker"))[0];
+  assert(retryLease?.id === failedJobId && retryLease.leaseGeneration > failedLease.leaseGeneration, "retryable scan failures must create a newly fenced attempt");
+  await scanLedger.fail({
+    lease: retryLease, workerId: "scan-retry-worker", sourceId: verified.sourceId,
+    startedAt: queueTime.value, endedAt: queueTime.value, connectorId: "greenhouse", connectorVersion: "1.0.0",
+    safeFetchPolicyVersion: "1.0.0", policyId: policyResult.policy.id, fetchMetadata: { requestCount: 0 },
+    reason: "transport_failure", errorCode: "upstream_timeout", retryable: true,
+  });
+  const retryOutcome = (await database<{ attempts: number; status: string; state: string; failures: number }[]>`
+    SELECT
+      (SELECT count(*)::int FROM source_scans WHERE work_job_id = ${failedJobId}) AS attempts,
+      (SELECT status FROM work_jobs WHERE id = ${failedJobId}) AS status,
+      health_state AS state, consecutive_failures AS failures
+    FROM sources WHERE id = ${verified.sourceId}
+  `)[0];
+  assert(retryOutcome?.attempts === 2 && retryOutcome.status === "terminal_failed" && retryOutcome.state === "degraded" && retryOutcome.failures === 2, "scan retry outcomes and source health must derive from durable completed attempts");
+
   const concurrentRetentionClaims = await Promise.all([
     artifactMetadata.claimDue(artifactNow, 10),
     artifactMetadata.claimDue(artifactNow, 10),
@@ -471,7 +561,7 @@ try {
   `)[0];
   assert(deletedArtifact?.state === "deleted" && deletedArtifact.deletedAt !== null, "retention must preserve deleted metadata as a tombstone");
 
-  console.log("Database verification passed: migrations, registry governance, queue fencing, and artifact retention reconciliation.");
+  console.log("Database verification passed: migrations, registry governance, queue fencing, scan ledger idempotency, and artifact retention reconciliation.");
 } finally {
   if (database) await database.close();
   if (upgradeDirectory) await rm(upgradeDirectory, { recursive: true, force: true });

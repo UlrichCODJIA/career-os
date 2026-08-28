@@ -120,12 +120,13 @@ export class PostgresWorkQueue {
     });
   }
 
-  async claim(workerId: string, limit = 1, leaseSeconds = 300): Promise<WorkLease[]> {
+  async claim(workerId: string, limit = 1, leaseSeconds = 300, jobType?: string): Promise<WorkLease[]> {
     if (!workerId.trim() || workerId.length > 200) throw new QueueRuleError("invalid_worker_id");
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new QueueRuleError("invalid_claim_limit");
     if (!Number.isInteger(leaseSeconds) || leaseSeconds < 5 || leaseSeconds > 3_600) {
       throw new QueueRuleError("invalid_lease_duration");
     }
+    if (jobType !== undefined && !/^[a-z0-9_.:-]{1,100}$/.test(jobType)) throw new QueueRuleError("invalid_job_type");
     const now = this.clock.now();
     const expiresAt = new Date(now.getTime() + leaseSeconds * 1000);
     const rows = await this.sql<{
@@ -136,6 +137,7 @@ export class PostgresWorkQueue {
         SELECT id FROM work_jobs
         WHERE status IN ('queued', 'retryable_failed')
           AND scheduled_at <= ${now.toISOString()}
+          AND (${jobType ?? null}::text IS NULL OR type = ${jobType ?? null})
           AND attempt < max_attempts
         ORDER BY scheduled_at, priority DESC, id
         LIMIT ${limit}

@@ -6,6 +6,7 @@ import { ArtifactRetentionService, LocalArtifactStore } from "@career-os/artifac
 import { createWorkerHealthServer } from "./server.ts";
 import { startScheduler } from "./scheduler.ts";
 import { startRetentionWorker } from "./retention.ts";
+import { startScanWorker } from "./scan-worker.ts";
 
 const config = readRuntimeConfig("worker");
 const server = createWorkerHealthServer(config);
@@ -23,11 +24,15 @@ const retention = database && artifactRoot
       { onError: () => console.error("Artifact retention tick failed") },
     )
   : undefined;
+const scanner = database && artifactRoot
+  ? startScanWorker(database, artifactRoot, { onError: () => console.error("Source scan tick failed") })
+  : undefined;
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, async () => {
     scheduler?.stop();
     retention?.stop();
+    scanner?.stop();
     server.stop(true);
     await database?.close();
     process.exit(0);

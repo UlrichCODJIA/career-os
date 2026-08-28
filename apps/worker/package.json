@@ -11,6 +11,9 @@
     "@career-os/artifact-store": "workspace:*",
     "@career-os/contracts": "workspace:*",
     "@career-os/db": "workspace:*",
-    "@career-os/observability": "workspace:*"
+    "@career-os/connector-sdk": "workspace:*",
+    "@career-os/connectors": "workspace:*",
+    "@career-os/observability": "workspace:*",
+    "@career-os/safe-fetch": "workspace:*"
   }
 }
