@@ -14,6 +14,7 @@ describe("database migration policy", () => {
       "0006_company_resolution.sql",
       "0007_opportunity_resolution.sql",
       "0008_lifecycle_controls.sql",
+      "0009_discovery_api.sql",
     ]);
     expect(migrations[0]?.checksum).toMatch(/^[0-9a-f]{64}$/);
   });
