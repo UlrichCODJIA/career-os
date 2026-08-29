@@ -1,5 +1,6 @@
 import type { SQL } from "bun";
 import { createHash } from "node:crypto";
+import { decideListingLifecycle, evaluateClosureCircuitBreaker, LIFECYCLE_VERSION } from "@career-os/lifecycle";
 
 export type ScanCompletenessReason = "complete" | "pagination_incomplete" | "schema_invalid" | "suspicious_empty" | "blocked" | "transport_failure" | "limit_exceeded";
 
@@ -117,6 +118,16 @@ function healthFor(reason: CompleteScanInput["completenessReason"]): "healthy" |
   return reason === "blocked" ? "blocked" : "degraded";
 }
 
+async function appendLifecycleEvent(tx: SQL, aggregateType: "source_listing" | "opportunity", aggregateId: string,
+  eventType: string, occurredAt: Date, scanId: string, sourceListingId: string | null, reasonCode: string): Promise<void> {
+  const sequence = (await tx<{ next: number }[]>`SELECT coalesce(max(sequence), 0)::int + 1 AS next FROM lifecycle_events
+    WHERE aggregate_type = ${aggregateType} AND aggregate_id = ${aggregateId}`)[0]!.next;
+  await tx`INSERT INTO lifecycle_events (id, aggregate_type, aggregate_id, sequence, event_type, occurred_at,
+    source_scan_id, source_listing_id, reason_code, actor_type, metadata)
+    VALUES (${Bun.randomUUIDv7()}, ${aggregateType}, ${aggregateId}, ${sequence}, ${eventType}, ${occurredAt},
+      ${scanId}, ${sourceListingId}, ${reasonCode}, ${"system"}, ${JSON.stringify({ lifecycleVersion: LIFECYCLE_VERSION })}::text::jsonb)`;
+}
+
 export class PostgresScanLedger {
   constructor(
     private readonly sql: SQL,
@@ -147,16 +158,19 @@ export class PostgresScanLedger {
         FOR UPDATE
       `)[0];
       if (!fenced) throw new ScanLedgerError("stale_lease");
-      const source = (await tx<{ connector_id: string; connector_version: string; policy_id: string }[]>`
-        SELECT connector_id, connector_version, policy_id FROM sources WHERE id = ${input.sourceId} FOR UPDATE
+      const source = (await tx<{ connector_id: string; connector_version: string; policy_id: string; last_job_count: number | null }[]>`
+        SELECT connector_id, connector_version, policy_id, last_job_count FROM sources WHERE id = ${input.sourceId} FOR UPDATE
       `)[0];
       if (!source) throw new ScanLedgerError("source_not_found");
       if (source.connector_id !== input.connectorId || source.connector_version !== input.connectorVersion || source.policy_id !== input.policyId) {
         throw new ScanLedgerError("source_snapshot_mismatch");
       }
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`${input.connectorId}:${input.connectorVersion}`}, 918273645))`;
 
       const scanId = Bun.randomUUIDv7();
       const complete = input.completenessReason === "complete";
+      const activeBefore = (await tx<{ count: number }[]>`SELECT count(*)::int AS count FROM source_listings
+        WHERE source_id = ${input.sourceId} AND lifecycle_state <> 'closed'`)[0]?.count ?? 0;
       await tx`INSERT INTO source_scans (
         id, source_id, work_job_id, lease_generation, started_at, ended_at, http_outcome,
         response_count, byte_count, duration_ms, connector_id, connector_version,
@@ -175,10 +189,54 @@ export class PostgresScanLedger {
           VALUES (${scanId}, ${artifactId}, ${order})`;
       }
 
+      const existingBreaker = (await tx<{ id: string }[]>`SELECT id FROM lifecycle_circuit_breakers
+        WHERE state = 'tripped' AND ((scope_type = 'source' AND source_id = ${input.sourceId})
+          OR (scope_type = 'connector_version' AND connector_id = ${input.connectorId} AND connector_version = ${input.connectorVersion}))
+        ORDER BY scope_type FOR UPDATE`)[0];
+      const anomaly = complete ? evaluateClosureCircuitBreaker({ previousJobCount: source.last_job_count,
+        observedJobCount: input.observations.length, activeListingCount: activeBefore }) : { tripped: false as const };
+      let breakerId = existingBreaker?.id;
+      if (anomaly.tripped && !breakerId) {
+        breakerId = Bun.randomUUIDv7();
+        const baseline = Math.max(source.last_job_count ?? 0, activeBefore);
+        await tx`INSERT INTO lifecycle_circuit_breakers (id, scope_type, source_id, connector_id, connector_version,
+          trigger_scan_id, reason, baseline_count, observed_count, anomaly_ratio)
+          VALUES (${breakerId}, ${"source"}, ${input.sourceId}, ${input.connectorId}, ${input.connectorVersion},
+            ${scanId}, ${anomaly.reason}, ${baseline}, ${input.observations.length}, ${anomaly.ratio})`;
+        await tx`INSERT INTO lifecycle_circuit_breaker_events (id, circuit_breaker_id, event_type, actor_type, reason, metadata)
+          VALUES (${Bun.randomUUIDv7()}, ${breakerId}, ${"tripped"}, ${"system"},
+            ${`Lifecycle quarantine: ${anomaly.reason}`}, ${JSON.stringify({ scanId, baseline, observed: input.observations.length, ratio: anomaly.ratio })}::text::jsonb)`;
+        const recentTrips = (await tx<{ count: number }[]>`SELECT count(DISTINCT source_id)::int AS count FROM lifecycle_circuit_breakers
+          WHERE scope_type = 'source' AND connector_id = ${input.connectorId} AND connector_version = ${input.connectorVersion}
+            AND state = 'tripped' AND created_at >= clock_timestamp() - interval '15 minutes'`)[0]?.count ?? 0;
+        if (recentTrips >= 3) {
+          const connectorBreakerId = Bun.randomUUIDv7();
+          const insertedConnector = await tx<{ id: string }[]>`INSERT INTO lifecycle_circuit_breakers (id, scope_type, source_id,
+            connector_id, connector_version, trigger_scan_id, reason, baseline_count, observed_count, anomaly_ratio)
+            VALUES (${connectorBreakerId}, ${"connector_version"}, ${null}, ${input.connectorId}, ${input.connectorVersion},
+              ${scanId}, ${"closure_spike"}, ${baseline}, ${input.observations.length}, ${anomaly.ratio})
+            ON CONFLICT DO NOTHING RETURNING id`;
+          if (insertedConnector.length) {
+            await tx`INSERT INTO lifecycle_circuit_breaker_events (id, circuit_breaker_id, event_type, actor_type, reason, metadata)
+              VALUES (${Bun.randomUUIDv7()}, ${connectorBreakerId}, ${"tripped"}, ${"system"},
+                ${"Connector-version quarantine after repeated source anomalies"},
+                ${JSON.stringify({ connectorId: input.connectorId, connectorVersion: input.connectorVersion, recentTrips })}::text::jsonb)`;
+            await tx`UPDATE sources SET health_state = 'quarantined' WHERE connector_id = ${input.connectorId}
+              AND connector_version = ${input.connectorVersion}`;
+          }
+        }
+      }
+      const absenceEligible = complete && !breakerId;
+
       let versionCount = 0;
       let addedCount = 0;
       let changedCount = 0;
+      let reopenedCount = 0;
+      let closedCount = 0;
+      let missingCount = 0;
       for (const observation of input.observations) {
+        const before = (await tx<{ id: string; lifecycle_state: "active" | "possibly_closed" | "closed" }[]>`SELECT id, lifecycle_state
+          FROM source_listings WHERE source_id = ${input.sourceId} AND source_job_id = ${observation.sourceJobId} FOR UPDATE`)[0];
         const listingId = Bun.randomUUIDv7();
         const listing = (await tx<{ id: string; current_version_id: string | null }[]>`
           INSERT INTO source_listings (
@@ -189,10 +247,16 @@ export class PostgresScanLedger {
           ) ON CONFLICT (source_id, source_job_id) DO UPDATE SET
             canonical_source_url = EXCLUDED.canonical_source_url, apply_url = EXCLUDED.apply_url,
             last_seen_open_at = EXCLUDED.last_seen_open_at, lifecycle_state = 'active', closed_at = NULL,
-            consecutive_complete_misses = 0
+            consecutive_complete_misses = 0, first_missing_at = NULL,
+            reopened_at = CASE WHEN source_listings.lifecycle_state <> 'active' THEN EXCLUDED.last_seen_open_at ELSE source_listings.reopened_at END
           RETURNING id, current_version_id
         `)[0]!;
         if (listing.id === listingId) addedCount += 1;
+        if (!before) await appendLifecycleEvent(tx, "source_listing", listing.id, "opened", input.endedAt, scanId, listing.id, "first_observation");
+        else if (before.lifecycle_state !== "active") {
+          reopenedCount += 1;
+          await appendLifecycleEvent(tx, "source_listing", listing.id, "reopened", input.endedAt, scanId, listing.id, "source_identity_reappeared");
+        }
 
         const newVersionId = Bun.randomUUIDv7();
         const inserted = await tx<{ id: string }[]>`INSERT INTO listing_versions (
@@ -233,13 +297,58 @@ export class PostgresScanLedger {
         }
       }
 
+      if (absenceEligible) {
+        const seen = new Set(input.observations.map((item) => item.sourceJobId));
+        const candidates = await tx<{ id: string; source_job_id: string; lifecycle_state: "active" | "possibly_closed";
+          consecutive_complete_misses: number; first_missing_at: Date | null }[]>`SELECT id, source_job_id, lifecycle_state,
+            consecutive_complete_misses, first_missing_at FROM source_listings
+          WHERE source_id = ${input.sourceId} AND lifecycle_state <> 'closed' ORDER BY id FOR UPDATE`;
+        for (const listing of candidates) {
+          if (seen.has(listing.source_job_id)) continue;
+          missingCount += 1;
+          const decision = decideListingLifecycle({ state: listing.lifecycle_state,
+            consecutiveCompleteMisses: listing.consecutive_complete_misses,
+            firstMissingAt: listing.first_missing_at?.toISOString() }, "qualifying_absence", input.endedAt.toISOString());
+          await tx`UPDATE source_listings SET lifecycle_state = ${decision.state},
+            consecutive_complete_misses = ${decision.consecutiveCompleteMisses}, first_missing_at = ${decision.firstMissingAt ?? null},
+            closed_at = ${decision.state === "closed" ? input.endedAt : null} WHERE id = ${listing.id}`;
+          if (decision.transition !== "none") {
+            if (decision.transition === "closed") closedCount += 1;
+            await appendLifecycleEvent(tx, "source_listing", listing.id, decision.transition, input.endedAt, scanId, listing.id,
+              decision.transition === "closed" ? "second_separated_complete_absence" : "first_complete_absence");
+          }
+        }
+        if (missingCount > 0) await tx`UPDATE sources SET next_scan_at = least(coalesce(next_scan_at,
+          ${new Date(input.endedAt.getTime() + 30 * 60_000)}), ${new Date(input.endedAt.getTime() + 30 * 60_000)}) WHERE id = ${input.sourceId}`;
+      }
+
+      const opportunities = await tx<{ id: string; status: "active" | "possibly_closed" | "closed" }[]>`SELECT opportunity.id, opportunity.status
+        FROM opportunities opportunity WHERE opportunity.id IN (SELECT member.opportunity_id FROM opportunity_members member
+          JOIN source_listings listing ON listing.id = member.source_listing_id
+          WHERE listing.source_id = ${input.sourceId} AND member.state <> 'human_rejected')
+        ORDER BY opportunity.id FOR UPDATE`;
+      for (const opportunity of opportunities) {
+        const memberStates = await tx<{ lifecycle_state: string }[]>`SELECT listing.lifecycle_state FROM opportunity_members member
+          JOIN source_listings listing ON listing.id = member.source_listing_id WHERE member.opportunity_id = ${opportunity.id}
+          AND member.state <> 'human_rejected'`;
+        const desired = memberStates.some((row) => row.lifecycle_state === "active") ? "active"
+          : memberStates.some((row) => row.lifecycle_state === "possibly_closed") ? "possibly_closed" : "closed";
+        if (desired !== opportunity.status) {
+          await tx`UPDATE opportunities SET status = ${desired}, possibly_closed_at = ${desired === "possibly_closed" ? input.endedAt : null},
+            closed_at = ${desired === "closed" ? input.endedAt : null} WHERE id = ${opportunity.id}`;
+          await appendLifecycleEvent(tx, "opportunity", opportunity.id, desired === "active" ? "reopened" : desired,
+            input.endedAt, scanId, null, "member_listing_projection");
+        }
+      }
+
       await tx`UPDATE source_scans SET ended_at = ${input.endedAt}, http_outcome = ${"succeeded"},
         duration_ms = ${input.endedAt.getTime() - input.startedAt.getTime()},
         completeness_state = ${complete ? "complete" : "incomplete"}, completeness_reason = ${input.completenessReason},
-        added_count = ${addedCount}, changed_count = ${changedCount}, successful_for_absence_inference = ${complete}
+        added_count = ${addedCount}, changed_count = ${changedCount}, missing_count = ${missingCount},
+        reopened_count = ${reopenedCount}, closed_count = ${closedCount}, successful_for_absence_inference = ${absenceEligible}
         WHERE id = ${scanId}`;
       await tx`UPDATE sources SET
-        health_state = ${healthFor(input.completenessReason)}, last_attempt_at = ${input.endedAt},
+        health_state = ${breakerId ? "quarantined" : healthFor(input.completenessReason)}, last_attempt_at = ${input.endedAt},
         last_success_at = ${input.endedAt},
         last_complete_at = CASE WHEN ${complete} THEN ${input.endedAt} ELSE last_complete_at END,
         last_nonempty_at = CASE WHEN ${input.observations.length > 0} THEN ${input.endedAt} ELSE last_nonempty_at END,
