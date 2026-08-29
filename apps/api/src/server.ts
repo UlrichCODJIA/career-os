@@ -9,7 +9,9 @@ import {
 import { createHealthResponse, parseApiRuntimeConfig, type RuntimeConfig } from "@career-os/contracts";
 import type { QueueHealth, PostgresWorkQueue } from "@career-os/db";
 import type { RegistryService } from "@career-os/discovery-domain";
+import type { DiscoveryReadService } from "@career-os/discovery-api";
 import { handleRegistryRoute } from "./registry-routes.ts";
+import { handleDiscoveryRoute } from "./discovery-routes.ts";
 
 interface WebSocketData {
   principal: AuthenticatedPrincipal;
@@ -48,6 +50,7 @@ function isIdempotencyKey(value: string | null): value is string {
 export interface ApiDependencies {
   registryService?: RegistryService;
   workQueue?: Pick<PostgresWorkQueue, "health">;
+  discoveryService?: DiscoveryReadService;
 }
 
 export function createApiServer(config: RuntimeConfig, dependencies: ApiDependencies = {}) {
@@ -109,6 +112,13 @@ export function createApiServer(config: RuntimeConfig, dependencies: ApiDependen
             { headers: corsHeaders(request, config) },
           );
         }
+
+        const discoveryResponse = await handleDiscoveryRoute(request, config, {
+          service: dependencies.discoveryService,
+          remoteAddress,
+          headers: (discoveryRequest) => corsHeaders(discoveryRequest, config),
+        });
+        if (discoveryResponse) return discoveryResponse;
 
         const registryResponse = await handleRegistryRoute(request, config, {
           service: dependencies.registryService,

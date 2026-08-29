@@ -9,6 +9,7 @@
     "@career-os/company-resolver": "workspace:*",
     "@career-os/contracts": "workspace:*",
     "@career-os/discovery-domain": "workspace:*",
+    "@career-os/discovery-api": "workspace:*",
     "@career-os/lifecycle": "workspace:*",
     "@career-os/opportunity-resolver": "workspace:*"
   }

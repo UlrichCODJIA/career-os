@@ -10,10 +10,12 @@ import {
   PostgresCompanyResolutionStore,
   PostgresOpportunityResolutionStore,
   PostgresLifecycleStore,
+  PostgresDiscoveryApi,
   PostgresScanLedger,
   PostgresWorkQueue,
   WORK_QUEUE_SCHEDULER_LOCK_KEY,
 } from "../packages/db/src/index.ts";
+import { parseOpportunityFilters } from "../packages/discovery-api/src/index.ts";
 import { ArtifactRetentionService, LocalArtifactStore } from "../packages/artifact-store/src/index.ts";
 import { RegistryService } from "../packages/discovery-domain/src/index.ts";
 
@@ -58,29 +60,29 @@ try {
   await admin.unsafe(`CREATE DATABASE ${quotedDatabase} TEMPLATE template0`);
 
   const concurrent = await Promise.all([migrate({ databaseUrl: testUrl }), migrate({ databaseUrl: testUrl })]);
-  assert(concurrent.flatMap((result) => result.applied).length === 8, "concurrent migration runners must apply each file once");
-  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 8, "waiting migration runner must verify every applied file");
+  assert(concurrent.flatMap((result) => result.applied).length === 9, "concurrent migration runners must apply each file once");
+  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 9, "waiting migration runner must verify every applied file");
 
   const replay = await migrate({ databaseUrl: testUrl });
-  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 8, "migration replay must be a verified no-op");
+  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 9, "migration replay must be a verified no-op");
 
   const productionDirectory = resolve(import.meta.dir, "../db/migrations");
   const productionMigrations = await loadMigrationFiles(productionDirectory);
-  assert(productionMigrations.length === 8, "all production migrations must exist");
+  assert(productionMigrations.length === 9, "all production migrations must exist");
   upgradeDirectory = await mkdtemp(join(tmpdir(), "career-os-migrations-"));
   for (const migration of productionMigrations) {
     await writeFile(join(upgradeDirectory, migration.name), migration.content, "utf8");
   }
   await writeFile(
-    join(upgradeDirectory, "0009_forward_upgrade_probe.sql"),
+    join(upgradeDirectory, "0010_forward_upgrade_probe.sql"),
     "CREATE TABLE migration_forward_probe (id integer PRIMARY KEY);\n",
     "utf8",
   );
   const upgrade = await migrate({ databaseUrl: testUrl, directory: upgradeDirectory });
-  assert(upgrade.applied.join() === "0009_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
+  assert(upgrade.applied.join() === "0010_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
 
   await writeFile(
-    join(upgradeDirectory, "0010_atomic_failure_probe.sql"),
+    join(upgradeDirectory, "0011_atomic_failure_probe.sql"),
     "CREATE TABLE migration_atomic_failure_probe (id integer PRIMARY KEY);\nSELECT missing_function_for_atomicity_test();\n",
     "utf8",
   );
@@ -93,17 +95,17 @@ try {
   const atomicFailure = await database<{ tableExists: boolean; ledgerRows: number }[]>`
     SELECT
       to_regclass('public.migration_atomic_failure_probe') IS NOT NULL AS "tableExists",
-      (SELECT count(*)::int FROM schema_migrations WHERE name = '0010_atomic_failure_probe.sql') AS "ledgerRows"
+      (SELECT count(*)::int FROM schema_migrations WHERE name = '0011_atomic_failure_probe.sql') AS "ledgerRows"
   `;
   assert(!atomicFailure[0]?.tableExists && atomicFailure[0]?.ledgerRows === 0, "failed migration and ledger write must roll back together");
 
   const originalUpgradeChecksum = (await database<{ checksum: string }[]>`
-    SELECT checksum FROM schema_migrations WHERE name = '0009_forward_upgrade_probe.sql'
+    SELECT checksum FROM schema_migrations WHERE name = '0010_forward_upgrade_probe.sql'
   `)[0]?.checksum;
   assert(originalUpgradeChecksum !== undefined, "forward migration checksum must be recorded");
-  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0009_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0010_forward_upgrade_probe.sql'`;
   await expectRejected(migrate({ databaseUrl: testUrl, directory: upgradeDirectory }), "checksum drift must reject migration startup");
-  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0009_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0010_forward_upgrade_probe.sql'`;
 
   const expectedTables = [
     "artifacts",
@@ -127,6 +129,7 @@ try {
     "opportunity_languages",
     "opportunity_locations",
     "opportunity_members",
+    "opportunity_problem_reports",
     "opportunity_resolution_decisions",
     "opportunity_resolution_fixtures",
     "opportunity_skills",
@@ -169,6 +172,8 @@ try {
     "opportunity_field_provenance_history_idx",
     "opportunity_languages_filter_idx",
     "opportunity_locations_country_idx",
+    "opportunity_problem_reports_opportunity_idx",
+    "opportunity_problem_reports_queue_idx",
     "opportunity_resolution_decisions_history_idx",
     "opportunity_resolution_decisions_listing_idx",
     "opportunity_skills_filter_idx",
@@ -780,6 +785,47 @@ try {
   assert(cleared.circuitBreakerId === clearedReplay.circuitBreakerId && collapseScan.observationCount === 10,
     "operator circuit-breaker clearance must be audited, reversible, and idempotent");
 
+  const secondOpportunityId = crypto.randomUUID();
+  await database`INSERT INTO opportunities (id, company_id, display_title, normalized_title, description_text, workplace_type,
+    canonical_source_url, apply_url, status, first_seen_at, canonicalization_version)
+    VALUES (${secondOpportunityId}, ${verified.companyId}, ${"Database Reliability Engineer"}, ${"database reliability engineer"},
+      ${"Operate durable PostgreSQL systems"}, ${"remote"}, ${"https://example.test/jobs/database-reliability"},
+      ${"https://example.test/jobs/database-reliability/apply"}, ${"active"}, ${new Date(reopenedAt.getTime() + 60_000)}, ${"verification"})`;
+  const discoveryApi = new PostgresDiscoveryApi(database);
+  const firstPage = await discoveryApi.searchOpportunities(parseOpportunityFilters(new URLSearchParams("q=engineer&sort=first_seen_desc&limit=1&status=active")));
+  assert(firstPage.items.length === 1 && firstPage.nextCursor !== null, "canonical search must return a bounded first keyset page");
+  const secondPage = await discoveryApi.searchOpportunities(parseOpportunityFilters(new URLSearchParams(
+    `q=engineer&sort=first_seen_desc&limit=1&status=active&cursor=${encodeURIComponent(firstPage.nextCursor)}`,
+  )));
+  assert(secondPage.items.length === 1 && secondPage.items[0]!.id !== firstPage.items[0]!.id,
+    "stable keyset pagination must not repeat an item across pages");
+  const nullDateFirst = await discoveryApi.searchOpportunities(parseOpportunityFilters(new URLSearchParams("q=engineer&sort=source_posted_desc&limit=1&status=active")));
+  const nullDateSecond = await discoveryApi.searchOpportunities(parseOpportunityFilters(new URLSearchParams(
+    `q=engineer&sort=source_posted_desc&limit=1&status=active&cursor=${encodeURIComponent(nullDateFirst.nextCursor!)}`,
+  )));
+  assert(nullDateFirst.items.length === 1 && nullDateSecond.items.length === 1
+    && nullDateFirst.items[0]!.id !== nullDateSecond.items[0]!.id,
+    "null source-posted dates must share the cursor sentinel without repeating rows");
+  const opportunityDetail = await discoveryApi.getOpportunity(createdOpportunity.opportunityId);
+  assert(Array.isArray(opportunityDetail?.provenance) && Array.isArray(opportunityDetail?.changeHistory)
+    && !JSON.stringify(opportunityDetail).match(/resume|candidate_email|phone_number/iu),
+    "canonical detail must include evidence history without candidate-private data");
+  const report = await discoveryApi.reportOpportunity(
+    { actorId: "discovery-verifier", idempotencyKey: "problem-report-0001" }, createdOpportunity.opportunityId,
+    { kind: "closed", detail: "Source link was independently observed closed" },
+  );
+  const replayedReport = await discoveryApi.reportOpportunity(
+    { actorId: "discovery-verifier", idempotencyKey: "problem-report-0001" }, createdOpportunity.opportunityId,
+    { kind: "closed", detail: "Source link was independently observed closed" },
+  );
+  assert(report.reportId === replayedReport.reportId, "problem-report replay must return the original immutable report");
+  const unchanged = (await database<{ status: string; reports: number }[]>`SELECT status,
+      (SELECT count(*)::int FROM opportunity_problem_reports WHERE opportunity_id = opportunity.id) AS reports
+    FROM opportunities opportunity WHERE id = ${createdOpportunity.opportunityId}`)[0];
+  assert(unchanged?.status === "active" && unchanged.reports === 1, "a user report must not directly mutate canonical lifecycle state");
+  await expectRejected(database`DELETE FROM opportunity_problem_reports WHERE id = ${report.reportId}`,
+    "problem reports must be append-only");
+
   const failedJobId = crypto.randomUUID();
   await database`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at, max_attempts)
     VALUES (${failedJobId}, ${"scan_source"}, ${`scan-failure:${failedJobId}`}, ${"{}"}::text::jsonb, ${"queued"}, ${queueTime.value}, ${2})`;
@@ -822,7 +868,7 @@ try {
   `)[0];
   assert(deletedArtifact?.state === "deleted" && deletedArtifact.deletedAt !== null, "retention must preserve deleted metadata as a tombstone");
 
-  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, lifecycle closure/reopening and circuit breakers, queue fencing, scan ledger idempotency, and artifact retention reconciliation.");
+  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, lifecycle closure/reopening and circuit breakers, bounded canonical APIs and immutable reports, queue fencing, scan ledger idempotency, and artifact retention reconciliation.");
 } finally {
   if (database) await database.close();
   if (upgradeDirectory) await rm(upgradeDirectory, { recursive: true, force: true });

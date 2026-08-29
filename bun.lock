@@ -16,6 +16,7 @@
         "@career-os/auth": "workspace:*",
         "@career-os/contracts": "workspace:*",
         "@career-os/db": "workspace:*",
+        "@career-os/discovery-api": "workspace:*",
         "@career-os/discovery-domain": "workspace:*",
         "@career-os/observability": "workspace:*",
       },
@@ -95,10 +96,15 @@
         "@career-os/artifact-store": "workspace:*",
         "@career-os/company-resolver": "workspace:*",
         "@career-os/contracts": "workspace:*",
+        "@career-os/discovery-api": "workspace:*",
         "@career-os/discovery-domain": "workspace:*",
         "@career-os/lifecycle": "workspace:*",
         "@career-os/opportunity-resolver": "workspace:*",
       },
+    },
+    "packages/discovery-api": {
+      "name": "@career-os/discovery-api",
+      "version": "0.0.0",
     },
     "packages/discovery-domain": {
       "name": "@career-os/discovery-domain",
@@ -159,6 +165,8 @@
     "@career-os/contracts": ["@career-os/contracts@workspace:packages/contracts"],
 
     "@career-os/db": ["@career-os/db@workspace:packages/db"],
+
+    "@career-os/discovery-api": ["@career-os/discovery-api@workspace:packages/discovery-api"],
 
     "@career-os/discovery-domain": ["@career-os/discovery-domain@workspace:packages/discovery-domain"],
 
