@@ -10,6 +10,7 @@ import {
   PostgresCompanyResolutionStore,
   PostgresOpportunityResolutionStore,
   PostgresLifecycleStore,
+  PostgresOperatorConsole,
   PostgresDiscoveryApi,
   PostgresScanLedger,
   PostgresWorkQueue,
@@ -784,6 +785,20 @@ try {
   );
   assert(cleared.circuitBreakerId === clearedReplay.circuitBreakerId && collapseScan.observationCount === 10,
     "operator circuit-breaker clearance must be audited, reversible, and idempotent");
+  const operatorConsole = new PostgresOperatorConsole(database);
+  const operatorOverview = await operatorConsole.overview();
+  const operatorEvidence = await operatorConsole.sourceEvidence(verified.sourceId);
+  const operatorEvidenceJson = JSON.stringify(operatorEvidence);
+  assert(Array.isArray(operatorOverview.sourceHealth) && operatorOverview.activeBreakers === 0,
+    "operator overview must derive bounded health and active-breaker counts");
+  assert(operatorEvidence?.rawArtifactAccess && asObjectForVerification(operatorEvidence.rawArtifactAccess).available === false,
+    "operator evidence must make raw artifact access explicitly unavailable");
+  assert(!/response_headers|storage_uri|canonical_source_url|authorization|cookie/iu.test(operatorEvidenceJson),
+    "operator evidence must exclude stored URLs, headers, credentials, and raw artifact locators");
+  const lifecycleAudit = (await database<{ count: number }[]>`SELECT count(*)::int AS count FROM audit_events
+    WHERE action = 'lifecycle.breaker_cleared' AND actor_id = ${"lifecycle-operator"}
+      AND reason = ${"Operator verified connector recovery evidence"}`)[0];
+  assert(lifecycleAudit?.count === 1, "operator breaker clearance must append exactly one audit event across replay");
 
   const secondOpportunityId = crypto.randomUUID();
   await database`INSERT INTO opportunities (id, company_id, display_title, normalized_title, description_text, workplace_type,
@@ -868,7 +883,7 @@ try {
   `)[0];
   assert(deletedArtifact?.state === "deleted" && deletedArtifact.deletedAt !== null, "retention must preserve deleted metadata as a tombstone");
 
-  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, lifecycle closure/reopening and circuit breakers, bounded canonical APIs and immutable reports, queue fencing, scan ledger idempotency, and artifact retention reconciliation.");
+  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, lifecycle closure/reopening and circuit breakers, redacted operator evidence and audit replay, bounded canonical APIs and immutable reports, queue fencing, scan ledger idempotency, and artifact retention reconciliation.");
 } finally {
   if (database) await database.close();
   if (upgradeDirectory) await rm(upgradeDirectory, { recursive: true, force: true });

@@ -7,11 +7,12 @@ import {
   type AuthenticatedPrincipal,
 } from "@career-os/auth";
 import { createHealthResponse, parseApiRuntimeConfig, type RuntimeConfig } from "@career-os/contracts";
-import type { QueueHealth, PostgresWorkQueue } from "@career-os/db";
+import type { OperatorConsoleService, QueueHealth, PostgresWorkQueue } from "@career-os/db";
 import type { RegistryService } from "@career-os/discovery-domain";
 import type { DiscoveryReadService } from "@career-os/discovery-api";
 import { handleRegistryRoute } from "./registry-routes.ts";
 import { handleDiscoveryRoute } from "./discovery-routes.ts";
+import { handleOperatorRoute } from "./operator-routes.ts";
 
 interface WebSocketData {
   principal: AuthenticatedPrincipal;
@@ -51,6 +52,7 @@ export interface ApiDependencies {
   registryService?: RegistryService;
   workQueue?: Pick<PostgresWorkQueue, "health">;
   discoveryService?: DiscoveryReadService;
+  operatorConsole?: OperatorConsoleService;
 }
 
 export function createApiServer(config: RuntimeConfig, dependencies: ApiDependencies = {}) {
@@ -126,6 +128,13 @@ export function createApiServer(config: RuntimeConfig, dependencies: ApiDependen
           headers: (registryRequest) => corsHeaders(registryRequest, config),
         });
         if (registryResponse) return registryResponse;
+
+        const operatorResponse = await handleOperatorRoute(request, config, {
+          service: dependencies.operatorConsole,
+          remoteAddress,
+          headers: (operatorRequest) => corsHeaders(operatorRequest, config),
+        });
+        if (operatorResponse) return operatorResponse;
 
         if (request.method === "POST" && /^\/api\/v1\/admin\/runs\/[^/]+\/approve$/.test(url.pathname)) {
           const principal = guardRequest(request, config, {

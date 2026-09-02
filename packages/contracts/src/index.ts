@@ -375,3 +375,27 @@ export type VerifySourceCandidate = z.infer<typeof VerifySourceCandidateSchema>;
 export type RejectSourceCandidate = z.infer<typeof RejectSourceCandidateSchema>;
 export type SourcePolicyPatch = z.infer<typeof SourcePolicyPatchSchema>;
 export type SourcePatch = z.infer<typeof SourcePatchSchema>;
+
+const OperatorReasonSchema = z.string().trim().min(8).max(1_000);
+const ResolverVersionSchema = z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9._:-]+$/);
+
+export const ClearCircuitBreakerSchema = z.object({ reason: OperatorReasonSchema }).strict();
+export const CompanyReviewDecisionSchema = z.object({
+  sourceCompanyId: z.uuid(), canonicalCompanyId: z.uuid(), resolverVersion: ResolverVersionSchema,
+  confidence: z.number().min(0.9).max(1), reason: OperatorReasonSchema,
+}).strict();
+export const CompanySplitDecisionSchema = z.object({
+  sourceCompanyId: z.uuid(), canonicalCompanyId: z.uuid(), resolverVersion: ResolverVersionSchema, reason: OperatorReasonSchema,
+}).strict();
+export const OpportunityReviewDecisionSchema = z.object({
+  sourceListingId: z.uuid(), opportunityId: z.uuid(), resolverVersion: ResolverVersionSchema, reason: OperatorReasonSchema,
+}).strict();
+export const OpportunitySplitDecisionSchema = z.object({
+  sourceListingId: z.uuid(), opportunityId: z.uuid(), resolverVersion: ResolverVersionSchema, reason: OperatorReasonSchema,
+}).strict();
+
+export type ClearCircuitBreaker = z.infer<typeof ClearCircuitBreakerSchema>;
+export type CompanyReviewDecision = z.infer<typeof CompanyReviewDecisionSchema>;
+export type CompanySplitDecision = z.infer<typeof CompanySplitDecisionSchema>;
+export type OpportunityReviewDecision = z.infer<typeof OpportunityReviewDecisionSchema>;
+export type OpportunitySplitDecision = z.infer<typeof OpportunitySplitDecisionSchema>;

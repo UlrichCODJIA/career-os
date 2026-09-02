@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { RuntimeConfig } from "../packages/contracts/src/index.ts";
 import { createWebServer } from "../apps/web/src/server.ts";
 import { shellHtml, shellScript, shellStyles } from "../apps/web/src/shell.ts";
+import { operatorHtml, operatorScript, operatorStyles } from "../apps/web/src/operator-shell.ts";
 
 const servers: Array<{ stop(closeActiveConnections?: boolean): void }> = [];
 const config: RuntimeConfig = {
@@ -84,5 +85,30 @@ describe("canonical Discovery web surface", () => {
     expect(shellStyles).toContain("@media(max-width:980px)");
     expect(shellStyles).toContain("@media(max-width:680px)");
     expect(shellStyles).toContain("align-items:flex-start");
+  });
+});
+
+describe("operator web surface", () => {
+  test("serves the responsive console with restrictive external assets", async () => {
+    const server = createWebServer(config, "http://127.0.0.1:4999"); servers.push(server);
+    const base = `http://127.0.0.1:${server.port}`;
+    const [page, styles, script] = await Promise.all([fetch(`${base}/operator?demo=1`), fetch(`${base}/operator.css`), fetch(`${base}/operator.js`)]);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-security-policy")).not.toContain("unsafe-inline");
+    expect(styles.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(script.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  test("keeps decisions reasoned, reversible, redacted, and XSS-safe", () => {
+    const script = operatorScript("http://127.0.0.1:4100");
+    expect(operatorHtml).toContain("Mandatory reason");
+    expect(operatorHtml).toContain("Raw artifacts restricted");
+    expect(script).toContain("n.textContent=v??''");
+    expect(script).toContain("idempotency-key");
+    expect(script).toContain("x-csrf-token");
+    expect(script).toContain("A later split remains available");
+    expect(script).not.toContain(".innerHTML");
+    expect(script).not.toContain("document.write");
+    expect(operatorStyles).toContain("@media(max-width:680px)");
   });
 });
