@@ -1,65 +1,66 @@
-# ARM-23 / DSV-020 Design QA
+# ARM-24 / DSV-021 Design QA
 
 ## Evidence
 
-- Source visual truth: `artifacts/design-qa/source-shell.png`
-- Rendered desktop implementation: `artifacts/design-qa/implementation-desktop-final.png`
-- Rendered mobile implementation: `artifacts/design-qa/implementation-mobile-final.png`
-- Combined comparison input: `artifacts/design-qa/source-vs-implementation.png`
-- Source pixels: 1265 × 828; implementation pixels: 1265 × 1021.
-- Desktop CSS viewport: the in-app browser's restored default 1265 px viewport; device scale factor was unchanged. The source and implementation have the same pixel width, so no density normalization was required. Their heights differ because the source is the compact foundation shell while the implementation contains the complete Discovery workspace.
-- Mobile CSS viewport: 390 × 844; full-page implementation capture. The explicit override was reset after capture.
-- State: dark theme, demo canonical data, first result selected. The second result, stale lifecycle warning, report dialog, report success, filters, and direct-source link were also exercised.
+- Source visual truth: `artifacts/design-qa/source-discovery-desktop.png` — the shipped DSV-020 Discovery workspace.
+- Initial desktop implementation: `artifacts/design-qa/operator-desktop.png`.
+- Final desktop implementation: `artifacts/design-qa/operator-desktop-revised.png`.
+- Mobile implementation: `artifacts/design-qa/operator-mobile.png`.
+- Combined comparison input: `artifacts/design-qa/design-qa-comparison.png`.
+- Source pixels: 1425 × 1036; final desktop implementation pixels: 1425 × 1392; combined pixels: 2882 × 1456.
+- Desktop CSS viewport override: 1440 × 1000; device scale factor unchanged. Both captures have the same 1425 px content width, so no density normalization was required. Heights differ because the operator console includes a full evidence region below the queue.
+- Mobile CSS viewport override: 390 × 844; full-page capture pixels: 375 × 2157. The browser's scrollbar/content treatment accounts for the 15 px width difference.
+- State: dark theme, deterministic demo fixtures, healthy and quarantined sources, an active breaker, company and opportunity reviews, empty evidence prompt, populated evidence view, and decision dialog.
 
 ## Findings
 
 - No actionable P0, P1, or P2 findings remain.
-- [P3] The mobile primary navigation intentionally scrolls horizontally, so the third future-only destination can be partly visible at 390 px. Core Discovery and private-workspace destinations remain fully visible and reachable.
+- [P3] The 390 px navigation remains horizontally scrollable as in the source visual system. All current operator destinations remain visible; this can be revisited as more destinations become active.
 
 ## Required Fidelity Surfaces
 
-- Fonts and typography: the implementation preserves the source's heavy geometric display hierarchy, compact uppercase mono labels, system sans fallback, tight headline tracking, and readable small evidence text. Wrapping remains intentional at desktop and mobile widths.
-- Spacing and layout rhythm: the source's generous dark canvas, fine borders, low-radius evidence cards, and teal-accented grouping carry into a dense two-pane search/detail workspace. The 980 px and 680 px breakpoints collapse the detail pane and sidebar without overlap.
-- Colors and visual tokens: the near-black/teal radial background, mint action color, muted blue-gray supporting copy, fine teal borders, and amber stale-state token match the source language and preserve semantic contrast.
-- Image quality and asset fidelity: neither source nor implementation uses imagery, logos requiring a source asset, illustrations, or non-standard icons. No placeholder, CSS-art, handcrafted SVG, or fake image substitute was introduced.
-- Copy and content: app copy is evidence-first and standalone. It explicitly distinguishes posted/found/verified dates, identifies the shared/private boundary, labels lifecycle uncertainty, and explains that reports cannot mutate canonical state.
-- States and accessibility: semantic search, navigation, status regions, buttons, labeled selects, a native dialog, focus styling, loading/error/empty copy, selected cards, stale warnings, report success, and safe external-link attributes were verified. Browser console logs were checked after the interaction pass and were empty.
+- Fonts and typography: preserves the source's system-sans body, heavy oversized display heading, compact uppercase mono evidence labels, tight headline tracking, and readable operational metadata. Desktop and mobile wrapping is intentional and unclipped.
+- Spacing and layout rhythm: preserves the sidebar/content frame, generous top hierarchy, one-pixel grouped metric surfaces, compact evidence cards, fine borders, and low radii. The two-column work area collapses cleanly to one column without overlap.
+- Colors and visual tokens: reuses the near-black/teal radial background, mint primary actions, muted blue-gray metadata, amber review states, and red quarantine state. Tokens retain the source hierarchy and semantic contrast.
+- Image quality and asset fidelity: neither source nor implementation relies on imagery, illustrations, non-standard icons, or logo artwork beyond text branding. No placeholder imagery, CSS art, handcrafted SVG, or glyph substitute was introduced.
+- Copy and content: operator copy is evidence-first, explains irreversible audit recording and reversible domain actions, distinguishes paused/quarantined states, and explicitly states that raw response bodies, headers, and credential-bearing URLs are unavailable.
+- States and accessibility: semantic navigation, summary region, headings, native selects, buttons, labeled mandatory-reason textarea, native dialog, live status output, loading/failure/empty/populated states, focusable actions, and responsive tap targets were verified. Browser console errors and warnings were empty.
 
 ## Full-View Comparison Evidence
 
-The combined source/implementation image shows the same visual system rather than a 1:1 screen clone: dark teal foundation, oversized white headline, mint evidence labels/actions, hairline bordered surfaces, and restrained system typography. The intentional change is information architecture—the three foundation cards become a persistent product sidebar, canonical search controls, result cards, and a provenance detail pane. Hierarchy, palette, surface treatment, and density remain coherent with the source.
+`artifacts/design-qa/design-qa-comparison.png` places the source Discovery workspace and final operator implementation in the same image. The comparison shows a coherent extension of the existing product rather than a redesign: identical dark-teal canvas, sidebar proportions, heavy white heading, mint labels and actions, fine bordered surfaces, restrained semantic colors, and matching density. The information architecture changes intentionally from search/results/detail to health metrics/source queue/review queue/evidence, while the visual grammar remains stable.
 
 ## Focused Region Evidence
 
-A separate crop was not needed: at the equal-width 2530 × 1021 combined comparison, headline typography, filters, result cards, detail actions, evidence metrics, and provenance rows are legible. Mobile received its own full-page capture because responsive stacking and status-pill behavior could not be judged from the desktop comparison.
+The combined 2882 × 1456 comparison keeps headings, filters, source cards, review cards, pills, actions, and evidence copy legible, so a separate crop was not necessary. Mobile received a dedicated full-page capture because stacking, navigation overflow, action wrapping, filter alignment, status pills, and tap targets could not be evaluated from the desktop comparison.
 
 ## Interaction Verification
 
-- Loaded two realistic canonical opportunities in the browser.
-- Selected the possibly-closed opportunity and verified its lifecycle warning.
-- Opened the report dialog, entered evidence, submitted it in demo mode, and verified the non-mutating success message.
-- Verified the employer source uses `target="_blank"` and `rel="noopener noreferrer"`.
-- Verified the desktop and 390 px responsive layouts.
-- Checked browser console logs: zero entries.
+- Loaded healthy and quarantined sources plus company and opportunity review fixtures.
+- Filter controls rendered and remained usable at desktop and 390 px widths.
+- Opened a source's redacted evidence view and verified scan ledger, artifact count, breaker history, and raw-artifact restriction copy.
+- Opened the company merge decision dialog, entered a mandatory reason, submitted in non-persistent demo mode, and verified the success state.
+- Verified source pause/activation, breaker-clearance, company-merge, and opportunity-attach controls are present; no destructive bulk action exists.
+- Checked browser console errors and warnings after interactions: zero entries.
 
 ## Comparison History
 
-1. Initial responsive pass found one P2 issue: on mobile, the status pill in `.detail-head` inherited cross-axis stretch and became a tall vertical capsule beside a wrapped title.
-2. Fix: added `align-items:flex-start` to `.detail-head` in `apps/web/src/shell.ts`.
-3. Post-fix evidence: `artifacts/design-qa/implementation-mobile-final.png` shows the status as a compact horizontal pill with the title wrapping independently. The corrected desktop capture and combined comparison show no regression.
+1. Initial desktop pass found a P2 readability issue: native selects were cramped against their uppercase `View` and `Type` labels, and status/review pills could grow into circular shapes.
+2. Fix: added flex alignment and spacing to `.heading label`, normalized `.heading select`, and constrained `.operator-head .pill` to content height with no wrapping in `apps/web/src/operator-shell.ts`.
+3. Post-fix evidence: `artifacts/design-qa/operator-desktop-revised.png` shows aligned filter controls and compact horizontal pills. `artifacts/design-qa/operator-mobile.png` confirms the fix at 390 px without card, action, or evidence-region regressions.
 
 ## Implementation Checklist
 
-- [x] Preserve the established dark evidence-first visual language.
-- [x] Make canonical search, filters, results, provenance, source links, and reports interactive.
-- [x] Keep shared-index queries free of candidate/profile fields.
-- [x] Render untrusted API values only through text nodes.
-- [x] Provide loading, empty, error, lifecycle-warning, and report-success states.
-- [x] Verify desktop and mobile browser rendering.
+- [x] Preserve the DSV-020 dark evidence-first visual language.
+- [x] Render healthy, blocked/quarantined, review, loading, empty, error, and populated evidence states.
+- [x] Keep raw artifact bytes, response headers, and credential-bearing URLs outside the console.
+- [x] Require reasons, CSRF evidence, and idempotency keys for operator mutations.
+- [x] Make source inspection and review decisions functional with realistic fixtures.
+- [x] Verify desktop and mobile rendering, dialog submission, and console output.
 - [x] Resolve all P0/P1/P2 visual findings.
 
 ## Follow-up Polish
 
-- P3: a future mobile navigation iteration can replace horizontal scrolling once the Applications destination becomes active and deserves persistent prominence.
+- P3: revisit compact navigation behavior when the operator console gains enough destinations to justify a mobile menu treatment.
 
 final result: passed

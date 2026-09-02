@@ -12,6 +12,7 @@ export * from "./company-resolution.ts";
 export * from "./opportunity-resolution.ts";
 export * from "./lifecycle.ts";
 export * from "./discovery-api.ts";
+export * from "./operator-console.ts";
 
 export interface DatabaseHealth {
   check(): Promise<{ ok: true; latencyMs: number }>;

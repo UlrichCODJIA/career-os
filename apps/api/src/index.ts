@@ -1,7 +1,7 @@
 import { readRuntimeConfig } from "@career-os/contracts";
 import { logServiceEvent } from "@career-os/observability";
 import { RegistryService } from "@career-os/discovery-domain";
-import { createDatabase, PostgresDiscoveryApi, PostgresRegistryStore, PostgresWorkQueue } from "@career-os/db";
+import { createDatabase, PostgresDiscoveryApi, PostgresOperatorConsole, PostgresRegistryStore, PostgresWorkQueue } from "@career-os/db";
 import { createApiServer } from "./server.ts";
 
 const config = readRuntimeConfig("api");
@@ -11,6 +11,7 @@ const server = createApiServer(config, {
   registryService: database ? new RegistryService(new PostgresRegistryStore(database)) : undefined,
   workQueue: database ? new PostgresWorkQueue(database) : undefined,
   discoveryService: database ? new PostgresDiscoveryApi(database) : undefined,
+  operatorConsole: database ? new PostgresOperatorConsole(database) : undefined,
 });
 
 logServiceEvent({
