@@ -72,6 +72,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://career_os:ci-only-database-password@127.0.0.1:5432/career_os
 
+      - name: Verify controlled 1,000-source pilot import and replay
+        run: bun run pilot:verify-database
+        env:
+          DATABASE_URL: postgresql://career_os:ci-only-database-password@127.0.0.1:5432/career_os
+
   secrets:
     name: Scan repository secrets
     runs-on: ubuntu-24.04

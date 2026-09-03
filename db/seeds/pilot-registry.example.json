@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "classification": "synthetic",
+  "pilotId": "synthetic-example",
+  "dataset": {
+    "name": "Synthetic documentation example",
+    "sourceUrl": "https://example.com/dataset",
+    "license": "CC0-1.0",
+    "generatedAt": "2026-09-01T00:00:00.000Z",
+    "reviewedAt": "2026-09-01T01:00:00.000Z",
+    "reviewedBy": "documentation-example"
+  },
+  "policies": [
+    {
+      "sourceFamily": "greenhouse",
+      "hostPattern": "*.greenhouse.io",
+      "accessClass": "documented_public_feed",
+      "reviewedAt": "2026-09-01T00:00:00.000Z",
+      "expiresAt": "2026-11-30T00:00:00.000Z",
+      "retentionClass": "standard",
+      "attributionRequirements": "Link to the employer posting.",
+      "maxRequestsPerMinute": 30,
+      "maxConcurrency": 2,
+      "contactEmail": "operator@example.com",
+      "userAgent": "Career OS synthetic verifier"
+    }
+  ],
+  "entries": [
+    {
+      "company": {
+        "displayName": "Example Company",
+        "primaryDomain": "example.com",
+        "careersUrl": "https://example.com/careers"
+      },
+      "source": {
+        "connectorId": "greenhouse",
+        "tenantKey": "example-company",
+        "boardUrl": "https://job-boards.greenhouse.io/example-company",
+        "apiBaseUrl": "https://boards-api.greenhouse.io/v1/boards/example-company",
+        "region": "global",
+        "connectorVersion": "1.0.0",
+        "cadenceSeconds": 43200
+      },
+      "evidence": {
+        "type": "employer_domain_link",
+        "evidenceUrl": "https://example.com/careers",
+        "statement": "Synthetic employer page links to the exact synthetic ATS tenant.",
+        "confidence": 0.99
+      },
+      "discoveryReference": "synthetic:documentation-only",
+      "observedAt": "2026-09-01T00:00:00.000Z",
+      "reviewReason": "Synthetic row reviewed only to demonstrate the manifest contract."
+    }
+  ],
+  "quarantine": []
+}

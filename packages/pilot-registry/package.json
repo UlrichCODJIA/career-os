@@ -1,0 +1,11 @@
+{
+  "name": "@career-os/pilot-registry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "tldts": "7.4.11",
+    "zod": "4.1.5"
+  }
+}
