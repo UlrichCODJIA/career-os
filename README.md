@@ -61,6 +61,7 @@ For the complete local profile, see [Local development](docs/development/local-p
 - [Observability and alert operations](docs/operations/observability.md)
 - [Source and connector incidents](docs/operations/source-incidents.md)
 - [Backup and restore](docs/operations/backup-restore.md)
+- [Controlled pilot registry](docs/operations/pilot-registry.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 
