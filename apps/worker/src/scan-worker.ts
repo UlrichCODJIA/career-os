@@ -4,6 +4,7 @@ import { ashbyConnector, greenhouseConnector, leverConnector } from "@career-os/
 import type { SourceConnector, SourceDescriptor } from "@career-os/connector-sdk";
 import { PostgresArtifactMetadata, PostgresScanLedger, PostgresWorkQueue } from "@career-os/db";
 import { SafeFetchClient, type SafeFetchPolicy } from "@career-os/safe-fetch";
+import { createStructuredLogger, productEventSinkFromEnv } from "@career-os/observability";
 import { SourceScanRunner } from "./scan-runner.ts";
 
 interface ScanContext {
@@ -69,8 +70,10 @@ export function startScanWorker(sql: SQL, artifactRoot: string, options: ScanWor
   if (!Number.isInteger(intervalMs) || intervalMs < 1_000) throw new Error("scan worker interval must be at least one second");
   const workerId = options.workerId ?? `scan-worker:${process.pid}:${crypto.randomUUID()}`;
   const queue = new PostgresWorkQueue(sql);
+  const telemetry = { logger: createStructuredLogger(), productEvents: productEventSinkFromEnv() };
   const runner = new SourceScanRunner(
     new SafeFetchClient(), new LocalArtifactStore({ root: artifactRoot }), new PostgresArtifactMetadata(sql), new PostgresScanLedger(sql),
+    {}, undefined, telemetry,
   );
   let stopped = false;
   let active: Promise<void> | undefined;

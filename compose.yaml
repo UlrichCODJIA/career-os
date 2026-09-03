@@ -25,6 +25,18 @@ services:
     networks:
       - backend
 
+  migrate:
+    <<: *career-os-service
+    command: [bun, run, scripts/migrate.ts]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://career_os:local-development-only@postgres:5432/career_os
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
   api:
     <<: *career-os-service
     command: [bun, run, apps/api/src/index.ts]
@@ -40,8 +52,8 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: 4100
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - 127.0.0.1:4100:4100
     networks:
@@ -63,11 +75,13 @@ services:
       DISCOVERY_PUBLIC_BASE_URL: http://127.0.0.1:4101
       DATABASE_URL: postgresql://career_os:local-development-only@postgres:5432/career_os
       ARTIFACT_ROOT: /data/artifacts
+      POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      POSTHOG_HOST: ${POSTHOG_HOST:-https://eu.i.posthog.com}
       WORKER_HOST: 0.0.0.0
       WORKER_HEALTH_PORT: 4101
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - artifacts:/data/artifacts
     networks:

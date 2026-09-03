@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 interface ComposeService {
+  command?: string[];
+  depends_on?: Record<string, { condition?: string }>;
   environment?: Record<string, string>;
   networks?: string[];
   ports?: string[];
@@ -21,6 +23,13 @@ describe("local Compose capability boundaries", () => {
     const web = config.services.web;
     const api = config.services.api;
     const worker = config.services.worker;
+    const migrate = config.services.migrate;
+
+    expect(migrate?.command).toEqual(["bun", "run", "scripts/migrate.ts"]);
+    expect(migrate?.environment).toEqual({ DATABASE_URL: "postgresql://career_os:local-development-only@postgres:5432/career_os" });
+    expect(migrate?.networks).toEqual(["backend"]);
+    expect(api?.depends_on?.migrate?.condition).toBe("service_completed_successfully");
+    expect(worker?.depends_on?.migrate?.condition).toBe("service_completed_successfully");
 
     expect(web?.environment).not.toHaveProperty("DATABASE_URL");
     expect(web?.environment).not.toHaveProperty("ARTIFACT_ROOT");
