@@ -1,5 +1,5 @@
 import { readRuntimeConfig } from "@career-os/contracts";
-import { logServiceEvent } from "@career-os/observability";
+import { createStructuredLogger, logServiceEvent } from "@career-os/observability";
 import { createDatabase, PostgresWorkQueue } from "@career-os/db";
 import { PostgresArtifactMetadata } from "@career-os/db";
 import { ArtifactRetentionService, LocalArtifactStore } from "@career-os/artifact-store";
@@ -12,20 +12,21 @@ const config = readRuntimeConfig("worker");
 const server = createWorkerHealthServer(config);
 const databaseUrl = process.env.DATABASE_URL;
 const database = databaseUrl ? createDatabase(databaseUrl) : undefined;
+const logger = createStructuredLogger();
 const scheduler = database
   ? startScheduler(new PostgresWorkQueue(database), {
-      onError: () => console.error("Scheduler tick failed"),
+      onError: (error) => logger.record("queue_tick_failed", { error }, undefined, "error"),
     })
   : undefined;
 const artifactRoot = process.env.ARTIFACT_ROOT;
 const retention = database && artifactRoot
   ? startRetentionWorker(
       new ArtifactRetentionService(new LocalArtifactStore({ root: artifactRoot }), new PostgresArtifactMetadata(database)),
-      { onError: () => console.error("Artifact retention tick failed") },
+      { onError: (error) => logger.record("retention_tick_failed", { error }, undefined, "error") },
     )
   : undefined;
 const scanner = database && artifactRoot
-  ? startScanWorker(database, artifactRoot, { onError: () => console.error("Source scan tick failed") })
+  ? startScanWorker(database, artifactRoot, { onError: (error) => logger.record("scan_failed", { error, phase: "worker_setup" }, undefined, "error") })
   : undefined;
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

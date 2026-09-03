@@ -5,6 +5,8 @@ import { sha256, type ArtifactStore, type StoredArtifact, type StoredArtifactObj
 import { greenhouseConnector } from "../packages/connectors/src/index.ts";
 import type { CompleteScanInput, FailedScanInput, ScanCommitResult } from "../packages/db/src/index.ts";
 import type { SafeFetchPort, SafeFetchRequest, SafeFetchResult } from "../packages/safe-fetch/src/index.ts";
+import type { ProductEventName, ProductEventProperties, StructuredLogEntry } from "../packages/observability/src/index.ts";
+import { createStructuredLogger } from "../packages/observability/src/index.ts";
 import { SimulatedWorkerCrash, SourceScanRunner, type ScanArtifactCatalog, type ScanLedgerPort } from "../apps/worker/src/scan-runner.ts";
 
 class MemoryArtifacts implements ArtifactStore {
@@ -70,7 +72,7 @@ async function harness(hook?: "afterFetch" | "afterArtifacts" | "beforeCommit") 
     policy: { id: "policy-1", allowedHosts: ["boards-api.greenhouse.io"], allowedContentTypes: ["application/json"], maxRequestsPerMinute: 60, maxConcurrency: 2, maxRedirects: 2, timeoutMs: 5_000, maxWireBytes: 1_000_000, maxResponseBytes: 1_000_000, userAgent: "Career OS test" },
     safeFetchPolicyVersion: "1.0.0", retentionClass: "standard",
   };
-  return { runner, input, artifacts, catalog, ledger };
+  return { runner, input, fetcher, artifacts, catalog, ledger };
 }
 
 describe("source scan orchestration", () => {
@@ -117,5 +119,33 @@ describe("source scan orchestration", () => {
     expect(context.ledger.failInput).toMatchObject({ reason: "limit_exceeded", errorCode: "resource_limit_exceeded", retryable: true });
     expect(context.ledger.failInput?.responseArtifactIds).toHaveLength(100);
     expect(new Set(context.ledger.failInput?.responseArtifactIds).size).toBe(1);
+  });
+
+  test("correlates queue, connector, artifact, and final scan records without exporting record IDs to PostHog", async () => {
+    const context = await harness();
+    const logs: StructuredLogEntry[] = [];
+    const events: Array<{ name: ProductEventName; properties: ProductEventProperties }> = [];
+    const runner = new SourceScanRunner(
+      context.fetcher,
+      context.artifacts,
+      context.catalog,
+      context.ledger,
+      {},
+      () => new Date("2026-08-28T12:00:00.000Z"),
+      {
+        logger: createStructuredLogger({ write: (entry) => logs.push(entry) }),
+        productEvents: { async capture(name, properties) { events.push({ name, properties }); } },
+      },
+    );
+    await runner.run(context.input);
+    const correlated = logs.filter((entry) => entry.correlation);
+    expect(correlated.map((entry) => entry.event)).toEqual(["scan_started", "scan_artifact_recorded", "scan_artifact_recorded", "scan_completed"]);
+    expect(new Set(correlated.map((entry) => entry.correlation!.correlationId)).size).toBe(1);
+    expect(correlated[0]?.correlation).toMatchObject({ workJobId: context.input.lease.id, sourceId: "source-1", connectorId: "greenhouse", connectorVersion: "1.0.0" });
+    expect(correlated.filter((entry) => entry.event === "scan_artifact_recorded").map((entry) => entry.correlation!.artifactId)).toEqual(["artifact-1", "artifact-2"]);
+    expect(correlated.at(-1)?.correlation?.scanId).toBe("scan-1");
+    expect(events).toEqual([{ name: "source scan completed", properties: expect.objectContaining({ connector_id: "greenhouse", outcome: "completed", observation_count: 1 }) }]);
+    expect(JSON.stringify(events)).not.toContain(context.input.lease.id);
+    expect(JSON.stringify(events)).not.toContain("source-1");
   });
 });

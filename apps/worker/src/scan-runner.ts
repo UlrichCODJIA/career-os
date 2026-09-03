@@ -5,6 +5,14 @@ import { validateParsedListingEvidence } from "@career-os/connector-sdk";
 import type { SafeFetchPolicy, SafeFetchPort, SafeFetchResult } from "@career-os/safe-fetch";
 import type { CompleteScanInput, FailedScanInput, ListingObservationInput, ScanCommitResult, ScanLease } from "@career-os/db";
 import { normalizeParsedListing } from "@career-os/normalization";
+import {
+  childCorrelation,
+  createCorrelationContext,
+  durationBucket,
+  type CorrelationContext,
+  type ProductEventSink,
+  type StructuredLogger,
+} from "@career-os/observability";
 
 // Kept local to the worker: only this composition root may combine network, artifact, parser, and database capabilities.
 export interface ScanArtifactCatalog {
@@ -29,6 +37,11 @@ export interface ScanRunnerHooks {
   beforeCommit?(): void | Promise<void>;
 }
 
+export interface ScanTelemetry {
+  logger: StructuredLogger;
+  productEvents: ProductEventSink;
+}
+
 export interface RunSourceScanInput {
   lease: ScanLease;
   workerId: string;
@@ -51,10 +64,14 @@ function hash(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function classifiedFailure(error: unknown): Pick<FailedScanInput, "reason" | "errorCode" | "retryable"> {
-  const code = typeof error === "object" && error !== null && "code" in error
+function rawErrorCode(error: unknown): string {
+  return typeof error === "object" && error !== null && "code" in error
     ? String((error as { code: unknown }).code).toLowerCase()
     : error instanceof Error ? error.message.toLowerCase() : "unknown_failure";
+}
+
+function classifiedFailure(error: unknown): Pick<FailedScanInput, "reason" | "errorCode" | "retryable"> {
+  const code = rawErrorCode(error);
   const blocked = code.includes("blocked") || code.includes("forbidden") || code.includes("policy");
   const schema = code.includes("schema") || code.includes("parse") || code.includes("identity");
   const limit = code.includes("limit") || code.includes("too_large");
@@ -68,6 +85,11 @@ function classifiedFailure(error: unknown): Pick<FailedScanInput, "reason" | "er
   };
 }
 
+const SSRF_REJECTION_CODES = new Set([
+  "credentials_forbidden", "dns_non_public_answer", "fragment_forbidden", "host_not_allowed",
+  "https_required", "literal_ip_forbidden", "port_not_allowed",
+]);
+
 export class SourceScanRunner {
   constructor(
     private readonly fetcher: SafeFetchPort,
@@ -76,10 +98,18 @@ export class SourceScanRunner {
     private readonly ledger: ScanLedgerPort,
     private readonly hooks: ScanRunnerHooks = {},
     private readonly now: () => Date = () => new Date(),
+    private readonly telemetry?: ScanTelemetry,
   ) {}
 
   async run(input: RunSourceScanInput): Promise<ScanCommitResult> {
     const startedAt = this.now();
+    const correlation = createCorrelationContext({
+      workJobId: input.lease.id,
+      sourceId: input.source.sourceId,
+      connectorId: input.connector.id,
+      connectorVersion: input.connector.version,
+    });
+    this.telemetry?.logger.record("scan_started", { attempt: input.lease.leaseGeneration }, correlation);
     const views: ArtifactView[] = [];
     let byteCount = 0;
     try {
@@ -91,7 +121,7 @@ export class SourceScanRunner {
           if (views.length >= MAX_SCAN_RESPONSES) throw new ScanExecutionError("scan_response_limit_exceeded");
           const fetched = await this.fetcher.fetch({ url: new URL(request.url), policy: input.policy, accept: request.accept });
           await this.hooks.afterFetch?.();
-          views.push(await this.persist(fetched, input, byteCount));
+          views.push(await this.persist(fetched, input, correlation));
           byteCount += fetched.bytes.byteLength;
           await this.hooks.afterArtifacts?.();
         }
@@ -108,7 +138,7 @@ export class SourceScanRunner {
             if (views.length >= MAX_SCAN_RESPONSES) throw new ScanExecutionError("scan_response_limit_exceeded");
             const fetched = await this.fetcher.fetch({ url: new URL(request.url), policy: input.policy, accept: request.accept });
             await this.hooks.afterFetch?.();
-            const view = await this.persist(fetched, input, byteCount);
+            const view = await this.persist(fetched, input, correlation);
             byteCount += fetched.bytes.byteLength;
             views.push(view);
             evidenceArtifacts.push(view);
@@ -140,7 +170,7 @@ export class SourceScanRunner {
         });
       }
       await this.hooks.beforeCommit?.();
-      return this.ledger.commit({
+      const result = await this.ledger.commit({
         lease: input.lease, workerId: input.workerId, sourceId: input.source.sourceId,
         startedAt, endedAt: this.now(), connectorId: input.connector.id, connectorVersion: input.connector.version,
         safeFetchPolicyVersion: input.safeFetchPolicyVersion, policyId: input.source.policyId,
@@ -148,28 +178,82 @@ export class SourceScanRunner {
         completenessReason: enumeration.completenessReason, responseArtifactIds: views.map((view) => view.artifactId),
         observations, byteCount, boardHash: hash(observations.map((item) => item.semanticFingerprint).sort().join("\n")),
       });
+      const completed = childCorrelation(correlation, { scanId: result.scanId });
+      const duration = this.now().getTime() - startedAt.getTime();
+      this.telemetry?.logger.record("scan_completed", {
+        completenessReason: enumeration.completenessReason,
+        observationCount: result.observationCount,
+        responseCount: views.length,
+        byteCount,
+        replayed: result.replayed,
+        durationMs: duration,
+      }, completed);
+      await this.captureProductEvent("source scan completed", {
+        connector_id: input.connector.id,
+        outcome: "completed",
+        completeness_reason: enumeration.completenessReason,
+        observation_count: result.observationCount,
+        duration_bucket: durationBucket(duration),
+        replayed: result.replayed,
+      });
+      return result;
     } catch (error) {
       if (error instanceof SimulatedWorkerCrash) throw error;
-      return this.ledger.fail({
+      const failure = classifiedFailure(error);
+      const rejectedCode = rawErrorCode(error);
+      if (SSRF_REJECTION_CODES.has(rejectedCode)) {
+        this.telemetry?.logger.record("ssrf_request_rejected", { reasonCode: rejectedCode }, correlation, "warn");
+      }
+      const result = await this.ledger.fail({
         lease: input.lease, workerId: input.workerId, sourceId: input.source.sourceId,
         startedAt, endedAt: this.now(), connectorId: input.connector.id, connectorVersion: input.connector.version,
         safeFetchPolicyVersion: input.safeFetchPolicyVersion, policyId: input.source.policyId,
         fetchMetadata: { requestCount: views.length, status: "failed" }, responseArtifactIds: views.map((view) => view.artifactId),
-        byteCount, ...classifiedFailure(error),
+        byteCount, ...failure,
       });
+      const failed = childCorrelation(correlation, { scanId: result.scanId });
+      const duration = this.now().getTime() - startedAt.getTime();
+      this.telemetry?.logger.record("scan_failed", {
+        errorCode: failure.errorCode,
+        retryable: failure.retryable,
+        responseCount: views.length,
+        byteCount,
+        durationMs: duration,
+      }, failed, "error");
+      await this.captureProductEvent("source scan failed", {
+        connector_id: input.connector.id,
+        outcome: "failed",
+        error_code: failure.errorCode,
+        retryable: failure.retryable,
+        duration_bucket: durationBucket(duration),
+      });
+      return result;
     }
   }
 
-  private async persist(result: SafeFetchResult, input: RunSourceScanInput, _priorBytes: number): Promise<ArtifactView> {
+  private async persist(result: SafeFetchResult, input: RunSourceScanInput, correlation: CorrelationContext): Promise<ArtifactView> {
     const stored = await this.artifacts.put(result.bytes, result.contentType);
     const fetchedAt = this.now();
     const record = await this.catalog.record({
       stored, metadata: { canonicalSourceUrl: result.finalUrl.href, responseHeaders: { ...result.headers } },
       retrievedAt: fetchedAt, statusCode: result.status, policyId: input.source.policyId, retentionClass: input.retentionClass,
     });
+    this.telemetry?.logger.record("scan_artifact_recorded", {
+      digest: stored.digest,
+      byteCount: stored.byteLength,
+      mediaType: stored.contentType,
+      statusCode: result.status,
+    }, childCorrelation(correlation, { artifactId: record.id }));
     return {
       artifactId: record.id, digest: stored.digest, contentType: result.contentType,
       sourceUrl: result.finalUrl.href, fetchedAt: fetchedAt.toISOString(), bytes: new Uint8Array(result.bytes),
     };
+  }
+
+  private async captureProductEvent(name: Parameters<ProductEventSink["capture"]>[0], properties: Parameters<ProductEventSink["capture"]>[1]): Promise<void> {
+    try { await this.telemetry?.productEvents.capture(name, properties); }
+    catch {
+      // Analytics is deliberately best-effort and must never change discovery truth or retry semantics.
+    }
   }
 }

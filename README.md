@@ -2,7 +2,7 @@
 
 Career OS is an open-source, provider-neutral system for the complete journey from job discovery to application, interview, offer, and outcome learning.
 
-> **Status:** executable Discovery foundation. The local profile, durable queue/artifact boundaries, fail-closed API authentication, supply-chain provenance, SSRF-resistant safe-fetch client, versioned connector SDK/fixture harness, and production-grade Greenhouse, global/EU Lever, and Ashby connectors are available.
+> **Status:** executable Discovery foundation. The local profile, durable queue/artifact boundaries, fail-closed API authentication, supply-chain provenance, SSRF-resistant safe-fetch client, versioned connector SDK/fixture harness, production-grade Greenhouse/global-EU Lever/Ashby connectors, canonical discovery and operator surfaces, and privacy-safe observability/runbooks are available.
 
 ## Principles
 
@@ -58,6 +58,9 @@ For the complete local profile, see [Local development](docs/development/local-p
 - [Deployment security profiles](docs/security/deployment-profiles.md)
 - [CI and software supply-chain baseline](docs/security/ci-supply-chain.md)
 - [Safe-fetch egress boundary](docs/security/safe-fetch.md)
+- [Observability and alert operations](docs/operations/observability.md)
+- [Source and connector incidents](docs/operations/source-incidents.md)
+- [Backup and restore](docs/operations/backup-restore.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 
