@@ -38,7 +38,7 @@ const PostalAddressSchema = z.object({
 const AddressSchema = z.object({ postalAddress: PostalAddressSchema.optional() }).passthrough();
 const SecondaryLocationSchema = z.object({
   location: z.string().max(500),
-  address: z.union([AddressSchema, PostalAddressSchema]).optional(),
+  address: z.union([AddressSchema, PostalAddressSchema]).nullable().optional(),
 }).passthrough();
 
 const CompensationComponentSchema = z.object({
@@ -268,10 +268,12 @@ export function createAshbyConnector(version = ASHBY_CONNECTOR_VERSION): SourceC
       return { listings, complete: true, completenessReason: "complete", responseArtifacts, connectorVersion: version };
     },
 
-    planDetails(source: SourceDescriptor, item: EnumeratedListing): FetchPlan {
-      const validated = validateAshbySource(source);
+    planDetails(source: SourceDescriptor, item: EnumeratedListing): null {
+      validateAshbySource(source);
       if (!POSTING_ID.test(item.sourceJobId)) throw new AshbyConnectorError("ashby_identity_mismatch");
-      return { requests: [{ url: boardRequestUrl(validated.tenantKey), method: "GET", accept: "application/json" }] };
+      // The public board response is already the authoritative full-detail artifact.
+      // Reusing it preserves snapshot consistency and keeps every source scan to one request.
+      return null;
     },
 
     parseListing(artifacts: readonly ArtifactView[], item: EnumeratedListing): ParsedListing {

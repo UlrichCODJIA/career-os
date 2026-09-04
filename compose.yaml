@@ -86,6 +86,7 @@ services:
       - artifacts:/data/artifacts
     networks:
       - backend
+      - egress
     healthcheck:
       test: [CMD, bun, -e, "const r=await fetch('http://127.0.0.1:4101/healthz');if(!r.ok)process.exit(1)"]
       interval: 3s
@@ -120,6 +121,7 @@ networks:
   frontend:
   backend:
     internal: true
+  egress:
 
 volumes:
   artifacts:

@@ -24,10 +24,12 @@ describe("local Compose capability boundaries", () => {
     const api = config.services.api;
     const worker = config.services.worker;
     const migrate = config.services.migrate;
+    const postgres = config.services.postgres;
 
     expect(migrate?.command).toEqual(["bun", "run", "scripts/migrate.ts"]);
     expect(migrate?.environment).toEqual({ DATABASE_URL: "postgresql://career_os:local-development-only@postgres:5432/career_os" });
     expect(migrate?.networks).toEqual(["backend"]);
+    expect(postgres?.networks).toEqual(["backend"]);
     expect(api?.depends_on?.migrate?.condition).toBe("service_completed_successfully");
     expect(worker?.depends_on?.migrate?.condition).toBe("service_completed_successfully");
 
@@ -46,7 +48,7 @@ describe("local Compose capability boundaries", () => {
       expect(worker?.environment).not.toHaveProperty(prohibited);
     }
     expect(worker?.volumes).toContain("artifacts:/data/artifacts");
-    expect(worker?.networks).toEqual(["backend"]);
+    expect(worker?.networks).toEqual(["backend", "egress"]);
     expect(worker?.ports ?? []).toEqual([]);
   });
 });

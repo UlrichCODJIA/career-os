@@ -841,9 +841,17 @@ try {
   await expectRejected(database`DELETE FROM opportunity_problem_reports WHERE id = ${report.reportId}`,
     "problem reports must be append-only");
 
+  queueTime.value = new Date(collapseAt.getTime() + 60 * 60_000);
   const failedJobId = crypto.randomUUID();
+  const failedPayload = JSON.stringify({
+    sourceId: verified.sourceId,
+    connectorId: "greenhouse",
+    connectorVersion: "1.0.0",
+    tenantKey: "acme",
+    cadenceBucket: 1,
+  });
   await database`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at, max_attempts)
-    VALUES (${failedJobId}, ${"scan_source"}, ${`scan-failure:${failedJobId}`}, ${"{}"}::text::jsonb, ${"queued"}, ${queueTime.value}, ${2})`;
+    VALUES (${failedJobId}, ${"scan_source"}, ${`scan-failure:${failedJobId}`}, ${failedPayload}::text::jsonb, ${"queued"}, ${queueTime.value}, ${2})`;
   const failedLease = (await firstQueue.claim("scan-failure-worker"))[0];
   assert(failedLease?.id === failedJobId, "failed scan fixture must be leased");
   await scanLedger.fail({
@@ -869,6 +877,35 @@ try {
   `)[0];
   assert(retryOutcome?.attempts === 2 && retryOutcome.status === "terminal_failed" && retryOutcome.state === "degraded" && retryOutcome.failures === 2, "scan retry outcomes and source health must derive from durable completed attempts");
 
+  const recoveryCommand = {
+    actorId,
+    idempotencyKey: "terminal-recovery-0001",
+    reason: "Recover verified transient scan failures after transport remediation",
+    failedAfter: new Date(queueTime.value.getTime() - 1_000),
+    failedBefore: new Date(queueTime.value.getTime() + 1_000),
+    errorCodes: ["upstream_timeout"] as const,
+    limit: 10,
+  };
+  const recovery = await firstQueue.recoverTerminalSourceScans(recoveryCommand);
+  const recoveryReplay = await firstQueue.recoverTerminalSourceScans(recoveryCommand);
+  assert(recovery.recovered === 1 && recovery.selected === 1
+    && recoveryReplay.recovered === recovery.recovered && recoveryReplay.selected === recovery.selected,
+    `terminal scan recovery must append one replacement job and replay idempotently (${JSON.stringify({ recovery, recoveryReplay })})`);
+  const recoveredLease = (await firstQueue.claim("recovery-verifier", 1, 300, "scan_source"))[0];
+  assert(recoveredLease?.payload.recoveredFromJobId === failedJobId,
+    "recovery must preserve an internal link to the terminal job without mutating it");
+  await firstQueue.cancel(recoveredLease.id, "Verification cleanup preserves both queue records");
+  const recoveryEvidence = (await database<{ terminal: number; recovered: number; audits: number }[]>`
+    SELECT
+      count(*) FILTER (WHERE id = ${failedJobId} AND status = 'terminal_failed')::int AS terminal,
+      count(*) FILTER (WHERE payload_json->>'recoveredFromJobId' = ${failedJobId})::int AS recovered,
+      (SELECT count(*)::int FROM audit_events WHERE action = 'queue.terminal_scans_recovered'
+        AND actor_id = ${actorId}) AS audits
+    FROM work_jobs
+  `)[0];
+  assert(recoveryEvidence?.terminal === 1 && recoveryEvidence.recovered === 1 && recoveryEvidence.audits === 1,
+    "recovery must retain terminal history and append exactly one aggregate operator audit event");
+
   const concurrentRetentionClaims = await Promise.all([
     artifactMetadata.claimDue(artifactNow, 10),
     artifactMetadata.claimDue(artifactNow, 10),
@@ -883,7 +920,7 @@ try {
   `)[0];
   assert(deletedArtifact?.state === "deleted" && deletedArtifact.deletedAt !== null, "retention must preserve deleted metadata as a tombstone");
 
-  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, lifecycle closure/reopening and circuit breakers, redacted operator evidence and audit replay, bounded canonical APIs and immutable reports, queue fencing, scan ledger idempotency, and artifact retention reconciliation.");
+  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, lifecycle closure/reopening and circuit breakers, redacted operator evidence and audit replay, bounded canonical APIs and immutable reports, queue fencing, idempotent terminal recovery with immutable history, scan ledger idempotency, and artifact retention reconciliation.");
 } finally {
   if (database) await database.close();
   if (upgradeDirectory) await rm(upgradeDirectory, { recursive: true, force: true });

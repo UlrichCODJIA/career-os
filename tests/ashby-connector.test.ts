@@ -84,7 +84,7 @@ describe("Ashby detection, source identity, and plans", () => {
     expect(() => validateAshbySource({ ...source, apiBaseUrl: "https://api.ashbyhq.com/posting-api/job-board/other" })).toThrow(AshbyConnectorError);
     expect(ashbyConnector.planEnumeration(source)).toEqual({ requests: [{ url: endpoint, method: "GET", accept: "application/json" }] });
     expect(() => ashbyConnector.planEnumeration(source, "next")).toThrow("ashby_cursor_unsupported");
-    expect(ashbyConnector.planDetails(source, { sourceJobId: postingId } as EnumeratedListing)).toEqual({ requests: [{ url: endpoint, method: "GET", accept: "application/json" }] });
+    expect(ashbyConnector.planDetails(source, { sourceJobId: postingId } as EnumeratedListing)).toBeNull();
   });
 });
 
@@ -103,6 +103,13 @@ describe("Ashby frozen contract and fail-closed completeness", () => {
 
   test("filters unlisted jobs but rejects duplicates, cross-tenant records, and endpoint drift", async () => {
     const payload = JSON.parse(await readFile(join(fixtureRoot, "list-valid-hostile.json"), "utf8")) as { jobs: Array<Record<string, unknown>> };
+    const nullableSecondaryAddress = {
+      ...payload.jobs[0]!,
+      secondaryLocations: [{ location: "Remote", address: null }],
+    };
+    expect(await ashbyConnector.parseEnumeration([
+      memoryArtifact({ apiVersion: "1", jobs: [nullableSecondaryAddress] }, "ashby-null-secondary-address"),
+    ])).toMatchObject({ complete: true, completenessReason: "complete" });
     const unlisted = { ...payload.jobs[0]!, id: "22222222-2222-4333-8444-555555555555", isListed: false, jobUrl: "https://jobs.ashbyhq.com/acme/22222222-2222-4333-8444-555555555555", applyUrl: "https://jobs.ashbyhq.com/acme/22222222-2222-4333-8444-555555555555/application" };
     const filtered = await ashbyConnector.parseEnumeration([memoryArtifact({ apiVersion: "1", jobs: [payload.jobs[0], unlisted] }, "ashby-filtered")]);
     expect(filtered).toMatchObject({ complete: true, completenessReason: "complete" });

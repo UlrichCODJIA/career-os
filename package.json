@@ -21,6 +21,7 @@
     "pilot:apply": "bun run scripts/pilot-registry.ts apply --manifest private/pilot-registry.json --expected 1000",
     "pilot:verify": "bun run scripts/pilot-registry.ts verify --manifest private/pilot-registry.json --expected 1000",
     "pilot:verify-database": "bun run scripts/verify-pilot-registry.ts",
+    "queue:recover-terminal-scans": "bun run scripts/recover-terminal-scans.ts",
     "db:migrate": "bun run scripts/migrate.ts",
     "db:verify": "bun run scripts/verify-database.ts",
     "smoke:host": "bun run scripts/smoke-host.ts",
