@@ -515,6 +515,11 @@ try {
   await electedLockHolder.close();
   const schedulerResults = await Promise.all([firstQueue.scheduleDueSources(), secondQueue.scheduleDueSources()]);
   assert(schedulerResults.reduce((sum, result) => sum + result.enqueued, 0) === 1, "concurrent schedulers must enqueue one deterministic source job");
+  const scheduledCadence = (await database<{ nextScanAt: Date | string }[]>`
+    SELECT next_scan_at AS "nextScanAt" FROM sources WHERE id = ${verified.sourceId}
+  `)[0]?.nextScanAt;
+  assert(scheduledCadence !== undefined && new Date(scheduledCadence).getTime() <= queueTime.value.getTime() + 43_200_000,
+    "deterministic load spreading must not lengthen a twice-daily source cadence");
   await database`UPDATE sources SET next_scan_at = ${queueTime.value.toISOString()} WHERE id = ${verified.sourceId}`;
   const duplicateSchedule = await firstQueue.scheduleDueSources();
   assert(duplicateSchedule.enqueued === 0, "the active dedupe key must prevent duplicate enqueue within a cadence bucket");

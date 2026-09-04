@@ -64,9 +64,10 @@ function retryDelayMs(attempt: number, random: number): number {
   return Math.floor(capMs * Math.min(0.999999, Math.max(0, random)));
 }
 
-function deterministicJitterMs(sourceId: string, bucket: number, cadenceSeconds: number): number {
+function deterministicIntervalMs(sourceId: string, bucket: number, cadenceSeconds: number): number {
   const prefix = createHash("sha256").update(`${sourceId}:${bucket}`).digest("hex").slice(0, 8);
-  return Math.floor(cadenceSeconds * 1000 * 0.1 * (Number.parseInt(prefix, 16) / 0xffffffff));
+  // Early-only jitter spreads load without ever violating a twice-per-24-hours cadence.
+  return Math.floor(cadenceSeconds * 1000 * (0.9 + 0.1 * (Number.parseInt(prefix, 16) / 0xffffffff)));
 }
 
 export class PostgresWorkQueue {
@@ -127,8 +128,7 @@ export class PostgresWorkQueue {
           ${0}, ${"queued"}, ${now.toISOString()}
         ) ON CONFLICT DO NOTHING RETURNING id`;
         enqueued += inserted.length;
-        const jitterMs = deterministicJitterMs(source.id, bucket, source.cadence_seconds);
-        const nextScanAt = new Date(now.getTime() + source.cadence_seconds * 1000 + jitterMs);
+        const nextScanAt = new Date(now.getTime() + deterministicIntervalMs(source.id, bucket, source.cadence_seconds));
         await tx`UPDATE sources SET next_scan_at = ${nextScanAt.toISOString()} WHERE id = ${source.id}`;
       }
       return { elected: true, enqueued, sourceIds: sources.map((source) => source.id) };
@@ -227,8 +227,7 @@ export class PostgresWorkQueue {
         ) ON CONFLICT DO NOTHING RETURNING id`;
         if (inserted.length === 0) continue;
         recovered += 1;
-        const jitterMs = deterministicJitterMs(source.id, bucket, source.cadence_seconds);
-        await tx`UPDATE sources SET next_scan_at = ${new Date(now.getTime() + source.cadence_seconds * 1000 + jitterMs).toISOString()}
+        await tx`UPDATE sources SET next_scan_at = ${new Date(now.getTime() + deterministicIntervalMs(source.id, bucket, source.cadence_seconds)).toISOString()}
           WHERE id = ${source.id}`;
       }
       const result = { recovered, selected: sources.length };

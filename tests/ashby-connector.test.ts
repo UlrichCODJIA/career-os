@@ -17,6 +17,7 @@ import {
   AshbyConnectorError,
   ashbyConnector,
   createAshbyConnector,
+  diagnoseAshbyArtifact,
   validateAshbySource,
 } from "../packages/connectors/src/index.ts";
 import { SafeFetchClient, type SafeFetchDecision, type SafeFetchPolicy, type SafeFetchTransport, type TransportRequest, type TransportResponse } from "../packages/safe-fetch/src/index.ts";
@@ -105,11 +106,16 @@ describe("Ashby frozen contract and fail-closed completeness", () => {
     const payload = JSON.parse(await readFile(join(fixtureRoot, "list-valid-hostile.json"), "utf8")) as { jobs: Array<Record<string, unknown>> };
     const nullableSecondaryAddress = {
       ...payload.jobs[0]!,
+      isRemote: null,
+      workplaceType: null,
+      address: null,
       secondaryLocations: [{ location: "Remote", address: null }],
     };
     expect(await ashbyConnector.parseEnumeration([
       memoryArtifact({ apiVersion: "1", jobs: [nullableSecondaryAddress] }, "ashby-null-secondary-address"),
     ])).toMatchObject({ complete: true, completenessReason: "complete" });
+    expect(diagnoseAshbyArtifact(memoryArtifact({ apiVersion: "1", jobs: [nullableSecondaryAddress] }, "ashby-diagnostic")))
+      .toMatchObject({ schemaValid: true, jobCount: 1, listedCount: 1, invalidIdentityCount: 0, duplicateIdentityCount: 0, schemaIssues: [] });
     const unlisted = { ...payload.jobs[0]!, id: "22222222-2222-4333-8444-555555555555", isListed: false, jobUrl: "https://jobs.ashbyhq.com/acme/22222222-2222-4333-8444-555555555555", applyUrl: "https://jobs.ashbyhq.com/acme/22222222-2222-4333-8444-555555555555/application" };
     const filtered = await ashbyConnector.parseEnumeration([memoryArtifact({ apiVersion: "1", jobs: [payload.jobs[0], unlisted] }, "ashby-filtered")]);
     expect(filtered).toMatchObject({ complete: true, completenessReason: "complete" });
@@ -119,6 +125,8 @@ describe("Ashby frozen contract and fail-closed completeness", () => {
     const crossTenant = { ...payload.jobs[0]!, jobUrl: `https://jobs.ashbyhq.com/other/${postingId}`, applyUrl: `https://jobs.ashbyhq.com/other/${postingId}/application` };
     const poisoned = await ashbyConnector.parseEnumeration([memoryArtifact({ apiVersion: "1", jobs: [crossTenant] }, "ashby-cross-tenant")]);
     expect(poisoned).toMatchObject({ listings: [], complete: false, completenessReason: "schema_invalid" });
+    expect(diagnoseAshbyArtifact(memoryArtifact({ apiVersion: "1", jobs: [crossTenant] }, "ashby-cross-tenant-diagnostic")))
+      .toMatchObject({ schemaValid: true, invalidIdentityCount: 1 });
     const valid = await artifact("list-valid-hostile.json", "ashby-valid");
     expect(() => ashbyConnector.parseEnumeration([{ ...valid, sourceUrl: `${endpoint}&extra=true` }])).toThrow("ashby_source_invalid");
     expect(() => ashbyConnector.parseEnumeration([valid, valid])).toThrow("ashby_artifact_count");

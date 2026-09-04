@@ -66,13 +66,13 @@ const AshbyJobSchema = z.object({
   department: z.string().max(500).nullable().optional(),
   team: z.string().max(500).nullable().optional(),
   isListed: z.boolean(),
-  isRemote: z.boolean().optional(),
-  workplaceType: z.enum(["OnSite", "Remote", "Hybrid"]).optional(),
+  isRemote: z.boolean().nullable().optional(),
+  workplaceType: z.enum(["OnSite", "Remote", "Hybrid"]).nullable().optional(),
   descriptionHtml: z.string().max(1_000_000),
   descriptionPlain: z.string().max(1_000_000).optional(),
   publishedAt: TimestampSchema,
   employmentType: z.enum(["FullTime", "PartTime", "Intern", "Contract", "Temporary"]).optional(),
-  address: AddressSchema.optional(),
+  address: AddressSchema.nullable().optional(),
   jobUrl: HttpsUrlSchema,
   applyUrl: HttpsUrlSchema,
   compensation: CompensationSchema.optional(),
@@ -157,6 +157,55 @@ function boardArtifact(artifacts: readonly ArtifactView[]): { artifact: Artifact
     || compensation.length !== 1 || compensation[0] !== "true"
   ) throw new AshbyConnectorError("ashby_source_invalid");
   return { artifact, boardName: identity.boardName };
+}
+
+export interface AshbyArtifactDiagnostic {
+  schemaValid: boolean;
+  jobCount: number;
+  listedCount: number;
+  invalidIdentityCount: number;
+  duplicateIdentityCount: number;
+  schemaIssues: ReadonlyArray<{ path: string; code: string; count: number }>;
+}
+
+export function diagnoseAshbyArtifact(artifactView: ArtifactView): AshbyArtifactDiagnostic {
+  const { artifact, boardName: expectedBoard } = boardArtifact([artifactView]);
+  const parsed = AshbyBoardSchema.safeParse(parseBoundedJson(artifact.bytes));
+  if (!parsed.success) {
+    const issues = new Map<string, number>();
+    for (const issue of parsed.error.issues) {
+      const path = issue.path.map((part) => typeof part === "number" ? "#" : part).join(".");
+      const key = `${path}|${issue.code}`;
+      issues.set(key, (issues.get(key) ?? 0) + 1);
+    }
+    return {
+      schemaValid: false, jobCount: 0, listedCount: 0, invalidIdentityCount: 0, duplicateIdentityCount: 0,
+      schemaIssues: [...issues].slice(0, 100).map(([key, count]) => {
+        const [path, code] = key.split("|");
+        return { path: path!, code: code!, count };
+      }),
+    };
+  }
+  const seen = new Set<string>();
+  let invalidIdentityCount = 0;
+  let duplicateIdentityCount = 0;
+  for (const job of parsed.data.jobs) {
+    try {
+      const sourceJobId = validateJobUrls(job, expectedBoard);
+      if (seen.has(sourceJobId)) duplicateIdentityCount += 1;
+      seen.add(sourceJobId);
+    } catch {
+      invalidIdentityCount += 1;
+    }
+  }
+  return {
+    schemaValid: true,
+    jobCount: parsed.data.jobs.length,
+    listedCount: parsed.data.jobs.filter((job) => job.isListed).length,
+    invalidIdentityCount,
+    duplicateIdentityCount,
+    schemaIssues: [],
+  };
 }
 
 function validateJobUrls(job: z.infer<typeof AshbyJobSchema>, expectedBoard: string): string {

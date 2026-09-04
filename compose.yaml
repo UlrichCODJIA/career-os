@@ -84,6 +84,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - artifacts:/data/artifacts
+      - release-evidence:/data/release-evidence
     networks:
       - backend
       - egress
@@ -125,4 +126,5 @@ networks:
 
 volumes:
   artifacts:
+  release-evidence:
   postgres-data:

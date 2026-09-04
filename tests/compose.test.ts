@@ -48,6 +48,7 @@ describe("local Compose capability boundaries", () => {
       expect(worker?.environment).not.toHaveProperty(prohibited);
     }
     expect(worker?.volumes).toContain("artifacts:/data/artifacts");
+    expect(worker?.volumes).toContain("release-evidence:/data/release-evidence");
     expect(worker?.networks).toEqual(["backend", "egress"]);
     expect(worker?.ports ?? []).toEqual([]);
   });
