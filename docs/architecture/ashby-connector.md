@@ -4,15 +4,15 @@ The Ashby connector implements Ashby's unauthenticated Public Job Posting API as
 
 ## Source and tenant identity
 
-A source binds one case-preserving Ashby jobs-page name to `https://api.ashbyhq.com/posting-api/job-board/{name}` and the global region. Detection recognizes exact `jobs.ashbyhq.com/{name}` board/posting/application paths and the documented public API path. A custom employer careers URL remains an onboarding claim that requires registry ownership evidence; it is not automatically detected as Ashby.
+A source binds one case-preserving Ashby jobs-page name to `https://api.ashbyhq.com/posting-api/job-board/{name}` and the global region. Jobs-page names are bounded ASCII path segments and may be domain-shaped, such as `cytora.com`; path separators and encoded or extra path segments remain invalid. Detection recognizes exact `jobs.ashbyhq.com/{name}` board/posting/application paths and the documented public API path. A custom employer careers URL remains an onboarding claim that requires registry ownership evidence; it is not automatically detected as Ashby.
 
 The only planned request is `GET .../{name}?includeCompensation=true`. Artifacts must use that exact host, path, and query. Every returned `jobUrl` and `applyUrl` must agree on the jobs-page name and UUID posting identity, and an optional response `id` must match that UUID. Credentials, fragments, ports, arbitrary query parameters, encoded or malformed tenants, cross-tenant records, duplicates, and ambiguous artifact sets fail closed.
 
 ## Enumeration and completeness
 
-Ashby's official public contract returns all currently published postings and does not define pagination. A single schema-valid response with at least one unique listed job is complete. Empty or all-unlisted responses are `suspicious_empty`; malformed/schema-drifted responses, duplicate identities, and mixed tenants are incomplete and cannot support closure inference. Records explicitly marked `isListed: false` are validated for tenant integrity but excluded from public discovery.
+Ashby's official public contract returns all currently published postings and does not define pagination. A single schema-valid response with at least one unique listed job is complete. Empty or all-unlisted responses are initially `suspicious_empty`; malformed/schema-drifted responses, duplicate identities, and mixed tenants are incomplete and cannot support closure inference. The scan ledger may promote a second matching empty response to complete only when it is separated by at least 30 minutes and no more than 24 hours, the source has never had listing history, and there are no active listings. This permits genuinely empty new boards to become healthy without allowing empty responses to close a previously observed job. Records explicitly marked `isListed: false` are validated for tenant integrity but excluded from public discovery.
 
-Ashby's UUID posting path segment is the stable source ID. Because the board response already includes the full description and metadata, detail planning re-fetches the same bounded JSON endpoint and selects exactly one still-listed UUID. This avoids executing the hosted React application and avoids undocumented GraphQL or candidate-application endpoints.
+Ashby's UUID posting path segment is the stable source ID. Because the board response already includes the full description and metadata, detail parsing reuses the same immutable board artifact and selects exactly one still-listed UUID. This keeps each scan to one request, avoids executing the hosted React application, and avoids undocumented GraphQL or candidate-application endpoints.
 
 ## Parsing and evidence
 

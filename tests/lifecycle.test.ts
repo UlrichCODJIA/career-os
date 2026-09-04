@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CLOSURE_CONFIRMATION_MS, decideListingLifecycle, evaluateClosureCircuitBreaker } from "../packages/lifecycle/src/index.ts";
+import { CLOSURE_CONFIRMATION_MS, confirmsNeverPopulatedEmptySource, decideListingLifecycle, evaluateClosureCircuitBreaker } from "../packages/lifecycle/src/index.ts";
 
 describe("listing lifecycle", () => {
   const t0 = "2026-01-01T00:00:00.000Z";
@@ -27,5 +27,28 @@ describe("closure circuit breakers", () => {
     expect(evaluateClosureCircuitBreaker({ previousJobCount: 100, observedJobCount: 10, activeListingCount: 100 })).toMatchObject({ tripped: true, reason: "count_collapse" });
     expect(evaluateClosureCircuitBreaker({ previousJobCount: 200, observedJobCount: 100, activeListingCount: 200 })).toMatchObject({ tripped: true, reason: "closure_spike" });
     expect(evaluateClosureCircuitBreaker({ previousJobCount: 20, observedJobCount: 18, activeListingCount: 20 })).toEqual({ tripped: false });
+  });
+});
+
+describe("never-populated empty source confirmation", () => {
+  const candidate = {
+    connectorReason: "suspicious_empty",
+    observedJobCount: 0,
+    activeListingCount: 0,
+    historicalListingCount: 0,
+    boardHash: "a".repeat(64),
+    previousBoardHash: "a".repeat(64),
+    previousEmptyAt: "2026-09-04T00:00:00.000Z",
+    observedAt: "2026-09-04T00:30:00.000Z",
+  };
+
+  test("requires two matching, separated empties and no listing history", () => {
+    expect(confirmsNeverPopulatedEmptySource(candidate)).toBe(true);
+    expect(confirmsNeverPopulatedEmptySource({ ...candidate, observedAt: "2026-09-04T00:29:59.999Z" })).toBe(false);
+    expect(confirmsNeverPopulatedEmptySource({ ...candidate, observedAt: "2026-09-05T00:00:00.001Z" })).toBe(false);
+    expect(confirmsNeverPopulatedEmptySource({ ...candidate, previousBoardHash: "b".repeat(64) })).toBe(false);
+    expect(confirmsNeverPopulatedEmptySource({ ...candidate, historicalListingCount: 1 })).toBe(false);
+    expect(confirmsNeverPopulatedEmptySource({ ...candidate, activeListingCount: 1 })).toBe(false);
+    expect(confirmsNeverPopulatedEmptySource({ ...candidate, connectorReason: "complete" })).toBe(false);
   });
 });

@@ -21,7 +21,10 @@ export const ASHBY_CONNECTOR_VERSION = "1.0.0";
 export const ASHBY_API_HOST = "api.ashbyhq.com";
 export const ASHBY_BOARD_HOST = "jobs.ashbyhq.com";
 
-const BOARD_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+// Ashby board identifiers are opaque path segments and can legitimately be
+// domain-shaped (for example, "cytora.com"). Keep the segment ASCII-only and
+// bounded while rejecting encoded/path separators through URL identity checks.
+const BOARD_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const POSTING_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const TimestampSchema = z.iso.datetime({ offset: true });
 const HttpsUrlSchema = z.url().refine((value) => {

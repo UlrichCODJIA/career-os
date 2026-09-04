@@ -1,6 +1,6 @@
 import type { SQL } from "bun";
 import { createHash } from "node:crypto";
-import { decideListingLifecycle, evaluateClosureCircuitBreaker, LIFECYCLE_VERSION } from "@career-os/lifecycle";
+import { confirmsNeverPopulatedEmptySource, decideListingLifecycle, evaluateClosureCircuitBreaker, LIFECYCLE_VERSION } from "@career-os/lifecycle";
 
 export type ScanCompletenessReason = "complete" | "pagination_incomplete" | "schema_invalid" | "suspicious_empty" | "blocked" | "transport_failure" | "limit_exceeded";
 
@@ -168,9 +168,30 @@ export class PostgresScanLedger {
       await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`${input.connectorId}:${input.connectorVersion}`}, 918273645))`;
 
       const scanId = Bun.randomUUIDv7();
-      const complete = input.completenessReason === "complete";
       const activeBefore = (await tx<{ count: number }[]>`SELECT count(*)::int AS count FROM source_listings
         WHERE source_id = ${input.sourceId} AND lifecycle_state <> 'closed'`)[0]?.count ?? 0;
+      const historicalListingCount = (await tx<{ count: number }[]>`SELECT count(*)::int AS count FROM source_listings
+        WHERE source_id = ${input.sourceId}`)[0]?.count ?? 0;
+      const previousEmpty = (await tx<{ board_hash: string | null; ended_at: Date | string }[]>`
+        SELECT board_hash, ended_at FROM source_scans
+        WHERE source_id = ${input.sourceId} AND completeness_reason = 'suspicious_empty' AND ended_at IS NOT NULL
+        ORDER BY ended_at DESC, id DESC LIMIT 1
+      `)[0];
+      const confirmedEmpty = confirmsNeverPopulatedEmptySource({
+        connectorReason: input.completenessReason,
+        observedJobCount: input.observations.length,
+        activeListingCount: activeBefore,
+        historicalListingCount,
+        boardHash: input.boardHash,
+        previousBoardHash: previousEmpty?.board_hash,
+        previousEmptyAt: previousEmpty ? new Date(previousEmpty.ended_at).toISOString() : undefined,
+        observedAt: input.endedAt.toISOString(),
+      });
+      const completenessReason = confirmedEmpty ? "complete" : input.completenessReason;
+      const complete = completenessReason === "complete";
+      const fetchMetadata = confirmedEmpty
+        ? { ...input.fetchMetadata, emptyConfirmation: "two_separated_matching_empty_scans_without_listing_history" }
+        : input.fetchMetadata;
       await tx`INSERT INTO source_scans (
         id, source_id, work_job_id, lease_generation, started_at, ended_at, http_outcome,
         response_count, byte_count, duration_ms, connector_id, connector_version,
@@ -181,7 +202,7 @@ export class PostgresScanLedger {
         ${scanId}, ${input.sourceId}, ${input.lease.id}, ${input.lease.leaseGeneration}, ${input.startedAt}, ${null},
         ${null}, ${input.responseArtifactIds.length}, ${input.byteCount}, ${null},
         ${input.connectorId}, ${input.connectorVersion}, ${input.safeFetchPolicyVersion}, ${input.policyId},
-        ${inputHash}, ${boundedObject(input.fetchMetadata, "fetch_metadata")}::text::jsonb, ${"in_progress"},
+        ${inputHash}, ${boundedObject(fetchMetadata, "fetch_metadata")}::text::jsonb, ${"in_progress"},
         ${null}, ${input.observations.length}, ${input.boardHash ?? null}, ${0}, ${0}, ${false}
       )`;
       for (const [order, artifactId] of input.responseArtifactIds.entries()) {
@@ -343,12 +364,12 @@ export class PostgresScanLedger {
 
       await tx`UPDATE source_scans SET ended_at = ${input.endedAt}, http_outcome = ${"succeeded"},
         duration_ms = ${input.endedAt.getTime() - input.startedAt.getTime()},
-        completeness_state = ${complete ? "complete" : "incomplete"}, completeness_reason = ${input.completenessReason},
+        completeness_state = ${complete ? "complete" : "incomplete"}, completeness_reason = ${completenessReason},
         added_count = ${addedCount}, changed_count = ${changedCount}, missing_count = ${missingCount},
         reopened_count = ${reopenedCount}, closed_count = ${closedCount}, successful_for_absence_inference = ${absenceEligible}
         WHERE id = ${scanId}`;
       await tx`UPDATE sources SET
-        health_state = ${breakerId ? "quarantined" : healthFor(input.completenessReason)}, last_attempt_at = ${input.endedAt},
+        health_state = ${breakerId ? "quarantined" : healthFor(completenessReason)}, last_attempt_at = ${input.endedAt},
         last_success_at = ${input.endedAt},
         last_complete_at = CASE WHEN ${complete} THEN ${input.endedAt} ELSE last_complete_at END,
         last_nonempty_at = CASE WHEN ${input.observations.length > 0} THEN ${input.endedAt} ELSE last_nonempty_at END,

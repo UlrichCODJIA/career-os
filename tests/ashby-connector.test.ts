@@ -75,6 +75,31 @@ describe("Ashby detection, source identity, and plans", () => {
     ]) expect(ashbyConnector.detect(new URL(url))).toMatchObject({ detected: false });
   });
 
+  test("accepts domain-shaped board identifiers without weakening path identity", () => {
+    const domainSource: SourceDescriptor = {
+      ...source,
+      tenantKey: "cytora.com",
+      boardUrl: "https://jobs.ashbyhq.com/cytora.com",
+      apiBaseUrl: "https://api.ashbyhq.com/posting-api/job-board/cytora.com",
+    };
+    expect(ashbyConnector.detect(new URL(domainSource.boardUrl))).toMatchObject({
+      detected: true,
+      tenantKey: "cytora.com",
+      confidence: 1,
+    });
+    expect(validateAshbySource(domainSource)).toEqual(domainSource);
+    expect(ashbyConnector.planEnumeration(domainSource)).toEqual({ requests: [{
+      url: "https://api.ashbyhq.com/posting-api/job-board/cytora.com?includeCompensation=true",
+      method: "GET",
+      accept: "application/json",
+    }] });
+    for (const url of [
+      "https://jobs.ashbyhq.com/cytora.com/extra",
+      "https://jobs.ashbyhq.com/cytora.com%2fescape",
+      "https://api.ashbyhq.com/posting-api/job-board/cytora.com/extra",
+    ]) expect(ashbyConnector.detect(new URL(url))).toMatchObject({ detected: false });
+  });
+
   test("binds a global tenant and emits one exact compensated board request", () => {
     expect(validateAshbySource(source).tenantKey).toBe("acme");
     expect(validateAshbySource({ ...source, boardUrl: "https://careers.acme.example/jobs" }).tenantKey).toBe("acme");

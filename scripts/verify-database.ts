@@ -587,6 +587,53 @@ try {
   const scanLease = (await firstQueue.claim("scan-ledger-worker"))[0];
   assert(scanLease?.id === scanJobId, "scan ledger fixture must be leased");
   const scanLedger = new PostgresScanLedger(database, { random: () => 0 });
+  const emptySourceId = crypto.randomUUID();
+  await database`INSERT INTO sources (
+    id, company_id, connector_id, tenant_key, board_url, api_base_url, region, verification_method,
+    verified_at, enabled, health_state, policy_id, policy_review_due_at, connector_version
+  ) VALUES (
+    ${emptySourceId}, ${verified.companyId}, ${"greenhouse"}, ${`empty-${emptySourceId}`},
+    ${`https://boards.greenhouse.io/empty-${emptySourceId}`},
+    ${`https://boards-api.greenhouse.io/v1/boards/empty-${emptySourceId}`}, ${"global"}, ${"human_review"},
+    ${new Date()}, ${false}, ${"unknown"}, ${policyResult.policy.id}, ${new Date(Date.now() + 86_400_000)}, ${"1.0.0"}
+  )`;
+  async function commitEmptyProbe(endedAt: Date) {
+    const jobId = crypto.randomUUID();
+    const token = crypto.randomUUID();
+    const workerId = `empty-source-verifier-${jobId}`;
+    await database!`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at, attempt,
+      leased_at, lease_expires_at, lease_owner, lease_token, lease_generation)
+      VALUES (${jobId}, ${"scan_source"}, ${`empty-source:${jobId}`}, ${"{}"}::text::jsonb, ${"leased"}, ${endedAt}, ${1},
+        ${new Date()}, ${new Date(Date.now() + 2 * 60 * 60_000)}, ${workerId}, ${token}, ${1})`;
+    return scanLedger.commit({
+      lease: { id: jobId, leaseToken: token, leaseGeneration: 1 }, workerId, sourceId: emptySourceId,
+      startedAt: new Date(endedAt.getTime() - 100), endedAt, connectorId: "greenhouse", connectorVersion: "1.0.0",
+      safeFetchPolicyVersion: "1.0.0", policyId: policyResult.policy.id,
+      fetchMetadata: { requestCount: 1, status: "parsed" }, completenessReason: "suspicious_empty",
+      responseArtifactIds: [catalogedArtifact.id], observations: [], byteCount: storedArtifact.byteLength,
+      boardHash: "empty-board-v1",
+    });
+  }
+  const emptyFirstAt = new Date();
+  const emptyFirst = await commitEmptyProbe(emptyFirstAt);
+  const emptySecond = await commitEmptyProbe(new Date(emptyFirstAt.getTime() + 30 * 60_000));
+  const emptyEvidence = await database<{ health: string; firstState: string; firstReason: string;
+    secondState: string; secondReason: string; confirmation: string | null; listings: number }[]>`
+    SELECT
+      (SELECT health_state FROM sources WHERE id = ${emptySourceId}) AS health,
+      (SELECT completeness_state FROM source_scans WHERE id = ${emptyFirst.scanId}) AS "firstState",
+      (SELECT completeness_reason FROM source_scans WHERE id = ${emptyFirst.scanId}) AS "firstReason",
+      (SELECT completeness_state FROM source_scans WHERE id = ${emptySecond.scanId}) AS "secondState",
+      (SELECT completeness_reason FROM source_scans WHERE id = ${emptySecond.scanId}) AS "secondReason",
+      (SELECT fetch_metadata->>'emptyConfirmation' FROM source_scans WHERE id = ${emptySecond.scanId}) AS confirmation,
+      (SELECT count(*)::int FROM source_listings WHERE source_id = ${emptySourceId}) AS listings
+  `;
+  assert(emptyEvidence[0]?.health === "healthy" && emptyEvidence[0].firstState === "incomplete"
+    && emptyEvidence[0].firstReason === "suspicious_empty" && emptyEvidence[0].secondState === "complete"
+    && emptyEvidence[0].secondReason === "complete"
+    && emptyEvidence[0].confirmation === "two_separated_matching_empty_scans_without_listing_history"
+    && emptyEvidence[0].listings === 0,
+  "two matching separated empty scans may confirm only a never-populated source without creating listing history");
   const scanStarted = new Date(queueTime.value.getTime() - 200);
   const scanEnded = new Date(queueTime.value.getTime() - 100);
   const completeScanInput: Parameters<PostgresScanLedger["commit"]>[0] = {
