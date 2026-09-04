@@ -48,8 +48,12 @@ try {
     )
     SELECT
       (SELECT count(*)::int FROM selected) AS due,
-      (SELECT count(*)::int FROM selected WHERE status = 'succeeded') AS succeeded,
-      (SELECT count(*)::int FROM selected WHERE status = 'terminal_failed') AS terminal,
+      (SELECT count(*)::int FROM selected job WHERE status = 'succeeded' AND EXISTS (
+        SELECT 1 FROM source_scans scan WHERE scan.work_job_id = job.id AND scan.completeness_reason = 'complete'
+      )) AS succeeded,
+      (SELECT count(*)::int FROM selected job WHERE status = 'terminal_failed' OR (status = 'succeeded' AND NOT EXISTS (
+        SELECT 1 FROM source_scans scan WHERE scan.work_job_id = job.id AND scan.completeness_reason = 'complete'
+      ))) AS terminal,
       (SELECT count(*)::int FROM selected WHERE status IN ('queued', 'leased', 'retryable_failed')) AS inflight,
       coalesce((SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY seconds) FROM lag), 0) AS p95
   `;
@@ -83,12 +87,6 @@ try {
   `;
   const [identity] = await database<Record<string, unknown>[]>`
     SELECT
-      (SELECT count(*)::int FROM source_scans WHERE created_at >= ${soakStartedAt} AND created_at <= ${capturedAt}) AS reprocess_checks,
-      (SELECT count(*)::int FROM source_scans WHERE created_at >= ${soakStartedAt} AND created_at <= ${capturedAt})
-        - (SELECT coalesce(sum(extra), 0)::int FROM (
-          SELECT count(*) - 1 AS extra FROM source_scans WHERE created_at >= ${soakStartedAt} AND created_at <= ${capturedAt}
-          GROUP BY work_job_id, lease_generation HAVING count(*) > 1
-        ) duplicate_scans) AS idempotent,
       (SELECT count(*)::int FROM source_listings) AS listings,
       (SELECT coalesce(sum(extra), 0)::int FROM (
         SELECT count(*) - 1 AS extra FROM source_listings GROUP BY source_id, source_job_id HAVING count(*) > 1
@@ -112,7 +110,7 @@ try {
       terminalJobs: count(scheduling?.terminal), inFlightJobs: count(scheduling?.inflight),
       p95QueueLagSeconds: metric(scheduling?.p95),
     },
-    freshness: { healthySources: count(freshness?.healthy), twiceEnumerated24h: count(freshness?.twice) },
+    freshness: { enabledSources: count(registry?.enabled), healthySources: count(freshness?.healthy), twiceEnumerated24h: count(freshness?.twice) },
     publication: {
       sampleSize: count(publication?.samples),
       medianHours: publication?.median === null ? null : metric(publication?.median),
@@ -120,7 +118,6 @@ try {
     },
     lifecycle: { closures: count(lifecycle?.closures), massFalseClosures: count(lifecycle?.mass_false) },
     identity: {
-      reprocessChecks: count(identity?.reprocess_checks), idempotentReprocesses: count(identity?.idempotent),
       sourceListings: count(identity?.listings), duplicateSourceListings: count(identity?.duplicates),
     },
     provenance: { displayedFacts: count(provenance?.displayed), factsWithEvidence: count(provenance?.evidenced) },

@@ -23,6 +23,7 @@ export interface ScanArtifactCatalog {
     statusCode?: number;
     policyId?: string;
     retentionClass: string;
+    deletionDueAt: Date;
   }): Promise<{ id: string }>;
 }
 
@@ -59,6 +60,23 @@ class ScanExecutionError extends Error {
 }
 
 const MAX_SCAN_RESPONSES = 100;
+const RETENTION_MILLISECONDS: Readonly<Record<string, number>> = Object.freeze({
+  standard: 30 * 24 * 60 * 60_000,
+  "licensed-ephemeral": 24 * 60 * 60_000,
+  verification: 60 * 60_000,
+});
+
+function deletionDeadline(retentionClass: string, retrievedAt: Date): Date {
+  const duration = RETENTION_MILLISECONDS[retentionClass];
+  if (!duration) throw new ScanExecutionError("unsupported_retention_policy");
+  return new Date(retrievedAt.getTime() + duration);
+}
+
+function requirePlannedResponse(requestedUrl: string, result: SafeFetchResult): void {
+  if (result.finalUrl.href !== new URL(requestedUrl).href) {
+    throw new ScanExecutionError("source_identity_redirect");
+  }
+}
 
 function hash(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -120,8 +138,9 @@ export class SourceScanRunner {
         for (const request of plan.requests) {
           if (views.length >= MAX_SCAN_RESPONSES) throw new ScanExecutionError("scan_response_limit_exceeded");
           const fetched = await this.fetcher.fetch({ url: new URL(request.url), policy: input.policy, accept: request.accept });
+          requirePlannedResponse(request.url, fetched);
           await this.hooks.afterFetch?.();
-          views.push(await this.persist(fetched, input, correlation));
+          views.push(await this.persist(fetched, request.url, input, correlation));
           byteCount += fetched.bytes.byteLength;
           await this.hooks.afterArtifacts?.();
         }
@@ -137,8 +156,9 @@ export class SourceScanRunner {
           for (const request of detailPlan.requests) {
             if (views.length >= MAX_SCAN_RESPONSES) throw new ScanExecutionError("scan_response_limit_exceeded");
             const fetched = await this.fetcher.fetch({ url: new URL(request.url), policy: input.policy, accept: request.accept });
+            requirePlannedResponse(request.url, fetched);
             await this.hooks.afterFetch?.();
-            const view = await this.persist(fetched, input, correlation);
+            const view = await this.persist(fetched, request.url, input, correlation);
             byteCount += fetched.bytes.byteLength;
             views.push(view);
             evidenceArtifacts.push(view);
@@ -176,7 +196,12 @@ export class SourceScanRunner {
         safeFetchPolicyVersion: input.safeFetchPolicyVersion, policyId: input.source.policyId,
         fetchMetadata: { requestCount: views.length, status: "parsed" },
         completenessReason: enumeration.completenessReason, responseArtifactIds: views.map((view) => view.artifactId),
-        observations, byteCount, boardHash: hash(observations.map((item) => item.semanticFingerprint).sort().join("\n")),
+        observations, byteCount, boardHash: hash(JSON.stringify({
+          sourceId: input.source.sourceId,
+          tenantKey: input.source.tenantKey,
+          artifacts: views.map((view) => view.digest),
+          observations: observations.map((item) => item.semanticFingerprint).sort(),
+        })),
       });
       const completed = childCorrelation(correlation, { scanId: result.scanId });
       const duration = this.now().getTime() - startedAt.getTime();
@@ -231,12 +256,13 @@ export class SourceScanRunner {
     }
   }
 
-  private async persist(result: SafeFetchResult, input: RunSourceScanInput, correlation: CorrelationContext): Promise<ArtifactView> {
+  private async persist(result: SafeFetchResult, requestedUrl: string, input: RunSourceScanInput, correlation: CorrelationContext): Promise<ArtifactView> {
     const stored = await this.artifacts.put(result.bytes, result.contentType);
     const fetchedAt = this.now();
     const record = await this.catalog.record({
       stored, metadata: { canonicalSourceUrl: result.finalUrl.href, responseHeaders: { ...result.headers } },
       retrievedAt: fetchedAt, statusCode: result.status, policyId: input.source.policyId, retentionClass: input.retentionClass,
+      deletionDueAt: deletionDeadline(input.retentionClass, fetchedAt),
     });
     this.telemetry?.logger.record("scan_artifact_recorded", {
       digest: stored.digest,
@@ -246,7 +272,9 @@ export class SourceScanRunner {
     }, childCorrelation(correlation, { artifactId: record.id }));
     return {
       artifactId: record.id, digest: stored.digest, contentType: result.contentType,
-      sourceUrl: result.finalUrl.href, fetchedAt: fetchedAt.toISOString(), bytes: new Uint8Array(result.bytes),
+      // Parsers validate against the reviewed request identity. A same-host
+      // redirect is transport metadata, not authority to switch ATS tenants.
+      sourceUrl: requestedUrl, fetchedAt: fetchedAt.toISOString(), bytes: new Uint8Array(result.bytes),
     };
   }
 

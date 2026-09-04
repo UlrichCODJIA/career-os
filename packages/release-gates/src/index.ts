@@ -17,11 +17,13 @@ export const SoakSnapshotSchema = z.object({
     dueJobs: Count, succeededJobs: Count, terminalJobs: Count, inFlightJobs: Count,
     p95QueueLagSeconds: z.number().finite().nonnegative(),
   }).strict(),
-  freshness: z.object({ healthySources: Count, twiceEnumerated24h: Count }).strict(),
+  freshness: z.object({ enabledSources: Count, healthySources: Count, twiceEnumerated24h: Count }).strict()
+    .refine((value) => value.healthySources <= value.enabledSources && value.twiceEnumerated24h <= value.healthySources,
+      "freshness counts must reconcile"),
   publication: z.object({ sampleSize: Count, medianHours: Hours.nullable(), p95Hours: Hours.nullable() }).strict(),
   lifecycle: z.object({ closures: Count, massFalseClosures: Count }).strict(),
   identity: z.object({
-    reprocessChecks: Count, idempotentReprocesses: Count, sourceListings: Count, duplicateSourceListings: Count,
+    sourceListings: Count, duplicateSourceListings: Count,
   }).strict(),
   provenance: z.object({ displayedFacts: Count, factsWithEvidence: Count }).strict(),
 }).strict();
@@ -57,6 +59,7 @@ export const DrillReceiptSchema = z.object({
   connectorOutageCreatedClosures: Count,
   workerCrashHistoryPreserved: z.boolean(),
   connectorRollbackHistoryPreserved: z.boolean(),
+  idempotentReprocessingPassed: z.boolean(),
   browserE2ePassed: z.boolean(),
 }).strict();
 
@@ -87,6 +90,7 @@ export const FaultInjectionReceiptSchema = z.object({
     points: z.tuple([z.literal("afterFetch"), z.literal("afterArtifacts"), z.literal("beforeCommit")]),
     partialCommitsCreated: z.literal(0), artifactsDeduplicated: z.literal(true), retryCommittedOnce: z.literal(true),
   }).strict(),
+  duplicateDelivery: z.object({ replayedExistingScan: z.literal(true), canonicalRowsChanged: z.literal(0) }).strict(),
   connectorRollback: z.object({
     executedVersions: z.tuple([z.literal("1.0.0"), z.literal("1.1.0"), z.literal("1.0.0")]),
     finalizedHistoryPreserved: z.literal(true),
@@ -164,7 +168,9 @@ export function evaluateReleaseEvidence(input: unknown): { ready: boolean; gates
     ">=14 snapshots over >=168h with <=14h gaps");
   const successRate = ratio(final.scheduling.succeededJobs, completedJobs);
   gate("schedule-success", completedJobs > 0 && successRate >= 0.99, `${(successRate * 100).toFixed(3)}%`, ">=99%");
-  const freshnessRates = mature.map((snapshot) => ratio(snapshot.freshness.twiceEnumerated24h, snapshot.freshness.healthySources));
+  gate("fleet-health", final.freshness.healthySources === final.freshness.enabledSources,
+    `${final.freshness.healthySources}/${final.freshness.enabledSources}`, "all enabled sources healthy");
+  const freshnessRates = mature.map((snapshot) => ratio(snapshot.freshness.twiceEnumerated24h, snapshot.freshness.enabledSources));
   gate("freshness", mature.length > 0 && Math.min(...freshnessRates) >= 0.95,
     mature.length ? `${(Math.min(...freshnessRates) * 100).toFixed(3)}% minimum` : "no mature snapshots", ">=95% at every mature snapshot");
   const queueP95 = percentile(mature.map((snapshot) => snapshot.scheduling.p95QueueLagSeconds), 0.95);
@@ -177,9 +183,8 @@ export function evaluateReleaseEvidence(input: unknown): { ready: boolean; gates
     String(final.lifecycle.massFalseClosures), "zero");
   gate("sampled-false-close", quality.closureReviewed > 0 && ratio(quality.falseClosures, quality.closureReviewed) < 0.005,
     `${quality.falseClosures}/${quality.closureReviewed}`, "<0.5%");
-  gate("idempotent-reprocessing", final.identity.reprocessChecks > 0
-      && final.identity.idempotentReprocesses === final.identity.reprocessChecks,
-    `${final.identity.idempotentReprocesses}/${final.identity.reprocessChecks}`, "100%");
+  gate("idempotent-reprocessing", bundle.drills.idempotentReprocessingPassed,
+    String(bundle.drills.idempotentReprocessingPassed), "verified duplicate delivery produces one immutable scan");
   gate("source-local-duplicates", final.identity.sourceListings > 0
       && ratio(final.identity.duplicateSourceListings, final.identity.sourceListings) < 0.001,
     `${final.identity.duplicateSourceListings}/${final.identity.sourceListings}`, "<0.1%");

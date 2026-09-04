@@ -19,10 +19,10 @@ function bundle(): Record<string, unknown> {
     registryDigest,
     registry: { verifiedSources: 1_000, enabledSources: 1_000 },
     scheduling: { dueJobs: 14_000, succeededJobs: 13_900, terminalJobs: 100, inFlightJobs: 0, p95QueueLagSeconds: 900 },
-    freshness: { healthySources: 1_000, twiceEnumerated24h: index < 2 ? 0 : 970 },
+    freshness: { enabledSources: 1_000, healthySources: 1_000, twiceEnumerated24h: index < 2 ? 0 : 970 },
     publication: { sampleSize: 8_000, medianHours: 4, p95Hours: 12 },
     lifecycle: { closures: 500, massFalseClosures: 0 },
-    identity: { reprocessChecks: 1_000, idempotentReprocesses: 1_000, sourceListings: 50_000, duplicateSourceListings: 0 },
+    identity: { sourceListings: 50_000, duplicateSourceListings: 0 },
     provenance: { displayedFacts: 200_000, factsWithEvidence: 200_000 },
   }));
   return {
@@ -43,7 +43,7 @@ function bundle(): Record<string, unknown> {
       schemaVersion: 1, completedAt: "2026-09-11T01:00:00.000Z", releaseCommit,
       databaseRestorePassed: true, artifactRestorePassed: true, restoredCountsMatched: true, restoredDigestsMatched: true,
       connectorOutageCreatedClosures: 0, workerCrashHistoryPreserved: true,
-      connectorRollbackHistoryPreserved: true, browserE2ePassed: true,
+      connectorRollbackHistoryPreserved: true, idempotentReprocessingPassed: true, browserE2ePassed: true,
     },
     security: {
       schemaVersion: 1, completedAt: "2026-09-11T01:00:00.000Z", releaseCommit,
@@ -57,20 +57,21 @@ describe("release evidence gates", () => {
   test("passes one internally consistent seven-day evidence bundle at every exact threshold", () => {
     const result = evaluateReleaseEvidence(bundle());
     expect(result.ready).toBe(true);
-    expect(result.gates.length).toBe(20);
+    expect(result.gates.length).toBe(21);
     expect(result.gates.every((gate) => gate.passed)).toBe(true);
   });
 
   test("fails closed on insufficient soak, stale freshness, quality drift, failed restore, or security findings", () => {
     const evidence = bundle() as any;
     evidence.snapshots = evidence.snapshots.slice(0, 13);
+    evidence.snapshots.at(-1).freshness.healthySources = 990;
     evidence.snapshots.at(-1).freshness.twiceEnumerated24h = 900;
     evidence.qualityAudit.workplaceCorrect = 90;
     evidence.drills.restoredDigestsMatched = false;
     evidence.security.unresolvedHigh = 1;
     const result = evaluateReleaseEvidence(evidence);
     expect(result.ready).toBe(false);
-    for (const id of ["soak-coverage", "freshness", "workplace-quality", "restore", "security"]) {
+    for (const id of ["soak-coverage", "fleet-health", "freshness", "workplace-quality", "restore", "security"]) {
       expect(result.gates.find((gate) => gate.id === id)?.passed).toBe(false);
     }
   });
@@ -118,6 +119,7 @@ describe("release evidence gates", () => {
         points: ["afterFetch", "afterArtifacts", "beforeCommit"], partialCommitsCreated: 0,
         artifactsDeduplicated: true, retryCommittedOnce: true,
       },
+      duplicateDelivery: { replayedExistingScan: true, canonicalRowsChanged: 0 },
       connectorRollback: { executedVersions: ["1.0.0", "1.1.0", "1.0.0"], finalizedHistoryPreserved: true },
     };
     expect(FaultInjectionReceiptSchema.parse(receipt).connectorOutage.closureEventsCreated).toBe(0);

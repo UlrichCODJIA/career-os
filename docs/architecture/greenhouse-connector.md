@@ -6,7 +6,7 @@ The Greenhouse connector implements the public Greenhouse Job Board API as a net
 
 A source binds one normalized lowercase Greenhouse board token to the fixed API base `https://boards-api.greenhouse.io/v1/boards/{token}`. Detection recognizes the current hosted board (`job-boards.greenhouse.io`), the legacy hosted board (`boards.greenhouse.io`), and the public API path. Arbitrary employer career domains are not detected as Greenhouse; registry onboarding must establish their ownership separately.
 
-Hosted Greenhouse URLs embedded in responses must carry the same token. API response artifacts must match the exact planned host, path, and query. Tenant mismatch, credentials, fragments, unexpected endpoints, ambiguous artifact sets, and invalid source IDs fail closed.
+Hosted Greenhouse URLs embedded in responses must use a supported Greenhouse host and carry the same token and numeric job identity. Custom or unrelated HTTPS origins, query-bearing action URLs, API endpoint drift, tenant mismatch, credentials, fragments, ambiguous artifact sets, and invalid source IDs fail closed. Parsers receive the immutable planned request identity; a transport redirect is retained only as redacted artifact metadata and cannot switch the ATS tenant used for validation.
 
 ## Enumeration and completeness
 

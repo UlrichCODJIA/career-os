@@ -22,7 +22,8 @@ for (const point of ["afterFetch", "afterArtifacts", "beforeCommit"] as const) {
 const databaseOutput = await run(["docker", "compose", "--profile", "local", "run", "--rm", "--build", "migrate",
   "bun", "run", "scripts/verify-database.ts"]);
 if (!databaseOutput.includes("zero-closure connector outage injection")
-  || !databaseOutput.includes("connector upgrade/rollback history")) {
+  || !databaseOutput.includes("connector upgrade/rollback history")
+  || !databaseOutput.includes("scan ledger idempotency")) {
   throw new Error("database verifier did not report the required fault-injection assertions");
 }
 
@@ -37,6 +38,7 @@ const receipt = FaultInjectionReceiptSchema.parse({
     artifactsDeduplicated: true,
     retryCommittedOnce: true,
   },
+  duplicateDelivery: { replayedExistingScan: true, canonicalRowsChanged: 0 },
   connectorRollback: { executedVersions: ["1.0.0", "1.1.0", "1.0.0"], finalizedHistoryPreserved: true },
 });
 const outputDirectory = resolve(process.env.RELEASE_EVIDENCE_DIR?.trim() || "private/release");
@@ -46,4 +48,4 @@ const temporary = `${target}.${crypto.randomUUID()}.tmp`;
 await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
 await rename(temporary, target);
 console.log(JSON.stringify({ passed: true, connectorOutageClosures: 0,
-  workerCrashPoints: receipt.workerCrash.points.length, rollbackHistoryPreserved: true }));
+  workerCrashPoints: receipt.workerCrash.points.length, duplicateDeliveryReplayed: true, rollbackHistoryPreserved: true }));

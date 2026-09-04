@@ -1,6 +1,6 @@
 # Release evidence and pilot soak
 
-ARM-28 / DSV-024 is fail-closed. A release is not ready because CI is green or a canary succeeded; all twenty gates in `@career-os/release-gates` must pass against one exact release commit and pilot-registry digest.
+ARM-28 / DSV-024 is fail-closed. A release is not ready because CI is green or a canary succeeded; all twenty-one gates in `@career-os/release-gates` must pass against one exact release commit and pilot-registry digest.
 
 ## Evidence set
 
@@ -23,19 +23,19 @@ Every receipt and snapshot is bound to a 40-character release commit. Registry-d
 
 The capture query defines metrics consistently:
 
-- schedule success uses completed `scan_source` jobs created since soak start;
+- schedule success counts only `scan_source` jobs whose durable scan is complete; connector-declared incomplete outcomes count against the rate even when their queue delivery terminated normally;
 - queue lag measures scheduled-to-first-attempt time, or current wait for not-yet-started jobs;
-- twice-enumerated freshness counts healthy enabled sources with at least two complete scans in the preceding 24 hours;
+- fleet health requires every enabled source to be healthy, and twice-enumerated freshness uses the full enabled-source population as its denominator;
 - publication lag uses nonnegative listing-version creation minus source-posted timestamps;
 - closures come from immutable lifecycle events, while confirmed mass false-closure incidents come from explicit release audit events;
-- idempotency and duplicate checks use the database uniqueness subjects `(work_job_id, lease_generation)` and `(source_id, source_job_id)`;
+- the fault drill replays an identical delivery through the durable scan ledger and proves it returns one immutable scan; duplicate checks use `(source_id, source_job_id)`;
 - provenance counts selected assertions and their retained evidence locator or deterministic/human origin.
 
 Start the soak only after the recovery backlog is empty, all 1,000 sources are healthy, the release commit is frozen, and the exact registry digest is recorded. Capture at least twice per day for seven full days. The evaluator requires at least 14 snapshots, at least 168 hours of coverage, no gap above 14 hours, and mature freshness/queue observations after the first 24 hours.
 
 ## Thresholds
 
-The evaluator requires 1,000 verified and enabled sources; at least 99% completed-job success; at least 95% rolling freshness; queue-lag p95 below 30 minutes; publication median below 12 hours and p95 below 18 hours; zero mass false closures; sampled false-close rate below 0.5%; 100% idempotent reprocessing; source-local duplicates below 0.1%; at least 95% workplace, eligible-country, and displayed compensation currency/pay-period correctness; 100% displayed-fact provenance; and broken employer/apply links below 2%.
+The evaluator requires 1,000 verified and enabled sources; all enabled sources healthy at the final snapshot; at least 99% complete-scan success; at least 95% rolling freshness across all enabled sources; queue-lag p95 below 30 minutes; publication median below 12 hours and p95 below 18 hours; zero mass false closures; sampled false-close rate below 0.5%; a successful durable duplicate-delivery replay; source-local duplicates below 0.1%; at least 95% workplace, eligible-country, and displayed compensation currency/pay-period correctness; 100% displayed-fact provenance; and broken employer/apply links below 2%.
 
 Database and artifact restore integrity, connector-outage closure safety, worker-crash history, connector rollback history, browser E2E, and the standard security scan must all pass. Any unresolved Critical or High security finding blocks release.
 

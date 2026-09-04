@@ -31,12 +31,15 @@ const receipt = DrillReceiptSchema.parse({
   workerCrashHistoryPreserved: faults.workerCrash.partialCommitsCreated === 0
     && faults.workerCrash.artifactsDeduplicated && faults.workerCrash.retryCommittedOnce,
   connectorRollbackHistoryPreserved: faults.connectorRollback.finalizedHistoryPreserved,
+  idempotentReprocessingPassed: faults.duplicateDelivery.replayedExistingScan
+    && faults.duplicateDelivery.canonicalRowsChanged === 0,
   browserE2ePassed: browser.discovery.requestPassed && browser.operator.controlPlanePassed
     && browser.operator.redactedEvidencePassed,
 });
 if (!receipt.databaseRestorePassed || !receipt.artifactRestorePassed || !receipt.restoredCountsMatched
   || !receipt.restoredDigestsMatched || receipt.connectorOutageCreatedClosures !== 0
-  || !receipt.workerCrashHistoryPreserved || !receipt.connectorRollbackHistoryPreserved || !receipt.browserE2ePassed) {
+  || !receipt.workerCrashHistoryPreserved || !receipt.connectorRollbackHistoryPreserved
+  || !receipt.idempotentReprocessingPassed || !receipt.browserE2ePassed) {
   throw new Error("one or more release drill inputs failed");
 }
 
