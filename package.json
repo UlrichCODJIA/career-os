@@ -25,6 +25,8 @@
     "queue:recover-incomplete-scans": "bun run scripts/recover-incomplete-scans.ts",
     "release:capture-soak": "bun run scripts/capture-soak-snapshot.ts",
     "release:record-browser": "bun run scripts/record-browser-e2e.ts",
+    "release:record-security": "bun run scripts/record-security-scan.ts",
+    "release:assemble-drills": "bun run scripts/assemble-release-drills.ts",
     "release:verify-faults": "bun run scripts/verify-fault-injection.ts",
     "release:verify-restore": "bun run scripts/verify-backup-restore.ts",
     "release:evaluate": "bun run scripts/evaluate-release.ts",
