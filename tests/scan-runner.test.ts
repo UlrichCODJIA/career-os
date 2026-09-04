@@ -25,7 +25,9 @@ class MemoryArtifacts implements ArtifactStore {
 
 class MemoryCatalog implements ScanArtifactCatalog {
   readonly ids = new Map<string, string>();
+  readonly records: Array<Parameters<ScanArtifactCatalog["record"]>[0]> = [];
   async record(input: Parameters<ScanArtifactCatalog["record"]>[0]): Promise<{ id: string }> {
+    this.records.push(input);
     let id = this.ids.get(input.stored.digest);
     if (!id) { id = `artifact-${this.ids.size + 1}`; this.ids.set(input.stored.digest, id); }
     return { id };
@@ -83,7 +85,30 @@ describe("source scan orchestration", () => {
     expect(context.ledger.commitInput).toMatchObject({ connectorId: "greenhouse", connectorVersion: "1.0.0", safeFetchPolicyVersion: "1.0.0", completenessReason: "complete" });
     expect(context.ledger.commitInput?.responseArtifactIds).toHaveLength(2);
     expect(context.ledger.commitInput?.observations[0]).toMatchObject({ sourceJobId: "101", parserVersion: "1.0.0", normalizerVersion: "1.0.0", taxonomyVersion: "1.0.0" });
+    expect(context.catalog.records.every((record) => record.deletionDueAt.toISOString() === "2026-09-27T12:00:00.000Z")).toBe(true);
     expect(context.ledger.failInput).toBeUndefined();
+  });
+
+  test("binds parsing to the planned tenant when transport redirects to another tenant", async () => {
+    const context = await harness();
+    const originalFetch = context.fetcher.fetch.bind(context.fetcher);
+    context.fetcher.fetch = async (request) => {
+      const result = await originalFetch(request);
+      if (!request.url.pathname.endsWith("/jobs")) return result;
+      const body = JSON.parse(new TextDecoder().decode(result.bytes));
+      const bytes = new TextEncoder().encode(JSON.stringify({
+        ...body,
+        jobs: body.jobs.map((job: Record<string, unknown>) => ({
+          ...job,
+          absolute_url: "https://job-boards.greenhouse.io/other/jobs/101",
+        })),
+      }));
+      return { ...result, bytes, finalUrl: new URL("https://boards-api.greenhouse.io/v1/boards/other/jobs") };
+    };
+    await context.runner.run(context.input);
+    expect(context.ledger.commitInput).toBeUndefined();
+    expect(context.ledger.failInput).toMatchObject({ reason: "schema_invalid", errorCode: "source_schema_invalid" });
+    expect(context.catalog.records).toHaveLength(0);
   });
 
   for (const point of ["afterFetch", "afterArtifacts", "beforeCommit"] as const) {

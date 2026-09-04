@@ -75,6 +75,7 @@ services:
       DISCOVERY_PUBLIC_BASE_URL: http://127.0.0.1:4101
       DATABASE_URL: postgresql://career_os:local-development-only@postgres:5432/career_os
       ARTIFACT_ROOT: /data/artifacts
+      SOAK_EVIDENCE_DIR: /data/release-evidence/soak
       POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
       POSTHOG_HOST: ${POSTHOG_HOST:-https://eu.i.posthog.com}
       WORKER_HOST: 0.0.0.0
@@ -84,8 +85,10 @@ services:
         condition: service_completed_successfully
     volumes:
       - artifacts:/data/artifacts
+      - release-evidence:/data/release-evidence
     networks:
       - backend
+      - egress
     healthcheck:
       test: [CMD, bun, -e, "const r=await fetch('http://127.0.0.1:4101/healthz');if(!r.ok)process.exit(1)"]
       interval: 3s
@@ -103,6 +106,8 @@ services:
       WEB_HOST: 0.0.0.0
       WEB_PORT: 3000
       PUBLIC_API_URL: http://127.0.0.1:4100
+      INTERNAL_API_URL: http://api:4100
+      AUTH_OPERATOR_TOKEN: ${CAREER_OS_LOCAL_API_TOKEN:?Run bun run local:setup before starting Compose}
     depends_on:
       api:
         condition: service_healthy
@@ -120,7 +125,9 @@ networks:
   frontend:
   backend:
     internal: true
+  egress:
 
 volumes:
   artifacts:
+  release-evidence:
   postgres-data:

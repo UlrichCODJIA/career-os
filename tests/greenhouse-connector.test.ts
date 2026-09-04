@@ -149,6 +149,21 @@ describe("Greenhouse frozen contract corpus", () => {
       completenessReason: "schema_invalid",
     });
   });
+
+  test("rejects off-tenant and wrong-job application URLs", async () => {
+    const listArtifact = await artifact("list-valid.json", "gh-list", "https://boards-api.greenhouse.io/v1/boards/acme/jobs");
+    const body = JSON.parse(new TextDecoder().decode(listArtifact.bytes));
+    for (const absoluteUrl of [
+      "https://phishing.example/apply/101",
+      "https://job-boards.greenhouse.io/other/jobs/101",
+      "https://job-boards.greenhouse.io/acme/jobs/999",
+      "https://job-boards.greenhouse.io/acme/jobs/101?gh_src=attacker",
+    ]) {
+      const bytes = new TextEncoder().encode(JSON.stringify({ ...body, jobs: [{ ...body.jobs[0], absolute_url: absoluteUrl }] }));
+      const parsed = await greenhouseConnector.parseEnumeration([{ ...listArtifact, digest: createHash("sha256").update(bytes).digest("hex"), bytes }]);
+      expect(parsed).toMatchObject({ complete: false, completenessReason: "schema_invalid" });
+    }
+  });
 });
 
 class FakeTransport implements SafeFetchTransport {

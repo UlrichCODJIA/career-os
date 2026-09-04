@@ -6,6 +6,7 @@
 2. Use the structured-log `correlationId` to follow the work-job ID, source ID, artifact IDs, and final scan ID. Confirm that all records belong to the same connector/version.
 3. Pause the individual source if repeated requests could increase external load. A connector-version breaker already quarantines every matching source; do not bypass it.
 4. Preserve immutable scan, artifact digest, policy, and decision evidence. Never paste response bodies, headers, signed URLs, or credentials into tickets, chat, analytics, or logs.
+5. After the remediation passes a single-source canary, use the bounded terminal-scan recovery command for only the affected time window and transient error codes. Replay it to prove idempotency, then verify that the original terminal count is unchanged and exactly one aggregate recovery audit was appended.
 
 ## Count collapse
 
