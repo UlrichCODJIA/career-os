@@ -60,6 +60,52 @@ export const DrillReceiptSchema = z.object({
   browserE2ePassed: z.boolean(),
 }).strict();
 
+export const RestoreDrillReceiptSchema = z.object({
+  schemaVersion: z.literal(1),
+  completedAt: Timestamp,
+  releaseCommit: Commit,
+  sourceSnapshotAt: Timestamp,
+  isolation: z.object({ outboundNetworkDisabled: z.literal(true), workerPausedDuringSnapshot: z.literal(true) }).strict(),
+  database: z.object({
+    passed: z.boolean(), tableCount: Count, sourceRowCount: Count, restoredRowCount: Count,
+    migrationCount: Count, countsMatched: z.boolean(), migrationsMatched: z.boolean(),
+  }).strict(),
+  artifacts: z.object({
+    passed: z.boolean(), sourceFileCount: Count, restoredFileCount: Count, sourceBytes: Count, restoredBytes: Count,
+    sourceTreeDigest: Digest, restoredTreeDigest: Digest, digestsMatched: z.boolean(),
+  }).strict(),
+  recoveryTimeSeconds: z.number().finite().nonnegative(),
+  cleanupPassed: z.boolean(),
+}).strict();
+
+export const FaultInjectionReceiptSchema = z.object({
+  schemaVersion: z.literal(1),
+  completedAt: Timestamp,
+  releaseCommit: Commit,
+  connectorOutage: z.object({ failedAttempts: z.literal(2), closureEventsCreated: z.literal(0), lifecycleStatePreserved: z.literal(true) }).strict(),
+  workerCrash: z.object({
+    points: z.tuple([z.literal("afterFetch"), z.literal("afterArtifacts"), z.literal("beforeCommit")]),
+    partialCommitsCreated: z.literal(0), artifactsDeduplicated: z.literal(true), retryCommittedOnce: z.literal(true),
+  }).strict(),
+  connectorRollback: z.object({
+    executedVersions: z.tuple([z.literal("1.0.0"), z.literal("1.1.0"), z.literal("1.0.0")]),
+    finalizedHistoryPreserved: z.literal(true),
+  }).strict(),
+}).strict();
+
+export const BrowserE2EReceiptSchema = z.object({
+  schemaVersion: z.literal(1),
+  completedAt: Timestamp,
+  releaseCommit: Commit,
+  browser: z.literal("Chrome"),
+  discovery: z.object({ requestPassed: z.literal(true), renderedState: z.enum(["results", "empty"]), consoleErrorCount: z.literal(0) }).strict(),
+  operator: z.object({
+    controlPlanePassed: z.literal(true), totalSources: Count, healthySources: Count, attentionSources: Count,
+    displayedSourceCards: Count, redactedEvidencePassed: z.literal(true), consoleErrorCount: z.literal(0),
+  }).strict().refine((value) => value.healthySources + value.attentionSources === value.totalSources,
+    "operator source counts must reconcile"),
+}).strict();
+
 export const SecurityReceiptSchema = z.object({
   schemaVersion: z.literal(1),
   completedAt: Timestamp,

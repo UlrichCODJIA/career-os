@@ -664,6 +664,28 @@ try {
   await expectRejected(database`DELETE FROM source_observations WHERE source_scan_id = ${scanCommit.scanId}`, "source observations must be append-only");
   await expectRejected(database`UPDATE source_scans SET board_hash = ${"tampered"} WHERE id = ${scanCommit.scanId}`, "completed source scans must be immutable");
 
+  async function commitConnectorVersionProbe(connectorVersion: string, endedAt: Date) {
+    await database!`UPDATE sources SET connector_version = ${connectorVersion} WHERE id = ${verified.sourceId}`;
+    const jobId = crypto.randomUUID();
+    const token = crypto.randomUUID();
+    const workerId = `connector-version-verifier-${connectorVersion}`;
+    await database!`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at, attempt,
+      leased_at, lease_expires_at, lease_owner, lease_token, lease_generation)
+      VALUES (${jobId}, ${"scan_source"}, ${`connector-version:${jobId}`}, ${"{}"}::text::jsonb, ${"leased"}, ${endedAt}, ${1},
+        ${new Date(endedAt.getTime() - 1_000)}, ${new Date(endedAt.getTime() + 60_000)}, ${workerId}, ${token}, ${1})`;
+    return scanLedger.commit({ ...completeScanInput, lease: { id: jobId, leaseToken: token, leaseGeneration: 1 },
+      workerId, startedAt: new Date(endedAt.getTime() - 500), endedAt, connectorVersion,
+      boardHash: `connector-version-${connectorVersion}` });
+  }
+  const upgradedScan = await commitConnectorVersionProbe("1.1.0", new Date(scanEnded.getTime() + 5 * 60_000));
+  const rolledBackScan = await commitConnectorVersionProbe("1.0.0", new Date(scanEnded.getTime() + 10 * 60_000));
+  const connectorVersionHistory = await database<{ connectorVersion: string }[]>`
+    SELECT connector_version AS "connectorVersion" FROM source_scans
+    WHERE id IN ${database([scanCommit.scanId, upgradedScan.scanId, rolledBackScan.scanId])}
+    ORDER BY started_at, id`;
+  assert(connectorVersionHistory.map((row) => row.connectorVersion).join(",") === "1.0.0,1.1.0,1.0.0",
+    "connector upgrade and rollback must retain immutable scan history for every executed version");
+
   const opportunityResolution = new PostgresOpportunityResolutionStore(database);
   const evidenceRows = await database<{ assertionId: string; listingId: string }[]>`SELECT assertion.id AS "assertionId",
       version.source_listing_id AS "listingId" FROM field_assertions assertion
@@ -847,6 +869,13 @@ try {
     "problem reports must be append-only");
 
   queueTime.value = new Date(collapseAt.getTime() + 60 * 60_000);
+  const beforeConnectorOutage = (await database<{ events: number; listingState: string; opportunityStatus: string }[]>`
+    SELECT
+      (SELECT count(*)::int FROM lifecycle_events WHERE aggregate_type = 'source_listing'
+        AND aggregate_id = ${evidenceRows[0]!.listingId}) AS events,
+      lifecycle_state AS "listingState",
+      (SELECT status FROM opportunities WHERE id = ${createdOpportunity.opportunityId}) AS "opportunityStatus"
+    FROM source_listings WHERE id = ${evidenceRows[0]!.listingId}`)[0];
   const failedJobId = crypto.randomUUID();
   const failedPayload = JSON.stringify({
     sourceId: verified.sourceId,
@@ -881,6 +910,18 @@ try {
     FROM sources WHERE id = ${verified.sourceId}
   `)[0];
   assert(retryOutcome?.attempts === 2 && retryOutcome.status === "terminal_failed" && retryOutcome.state === "degraded" && retryOutcome.failures === 2, "scan retry outcomes and source health must derive from durable completed attempts");
+  const afterConnectorOutage = (await database<{ events: number; listingState: string; opportunityStatus: string }[]>`
+    SELECT
+      (SELECT count(*)::int FROM lifecycle_events WHERE aggregate_type = 'source_listing'
+        AND aggregate_id = ${evidenceRows[0]!.listingId}) AS events,
+      lifecycle_state AS "listingState",
+      (SELECT status FROM opportunities WHERE id = ${createdOpportunity.opportunityId}) AS "opportunityStatus"
+    FROM source_listings WHERE id = ${evidenceRows[0]!.listingId}`)[0];
+  assert(beforeConnectorOutage !== undefined && afterConnectorOutage !== undefined
+    && afterConnectorOutage.events === beforeConnectorOutage.events
+    && afterConnectorOutage.listingState === beforeConnectorOutage.listingState
+    && afterConnectorOutage.opportunityStatus === beforeConnectorOutage.opportunityStatus,
+    "a connector outage must create zero closure events and preserve listing and opportunity lifecycle state");
 
   const recoveryCommand = {
     actorId,
@@ -925,7 +966,7 @@ try {
   `)[0];
   assert(deletedArtifact?.state === "deleted" && deletedArtifact.deletedAt !== null, "retention must preserve deleted metadata as a tombstone");
 
-  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, lifecycle closure/reopening and circuit breakers, redacted operator evidence and audit replay, bounded canonical APIs and immutable reports, queue fencing, idempotent terminal recovery with immutable history, scan ledger idempotency, and artifact retention reconciliation.");
+  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, lifecycle closure/reopening and circuit breakers, zero-closure connector outage injection, connector upgrade/rollback history, redacted operator evidence and audit replay, bounded canonical APIs and immutable reports, queue fencing, idempotent terminal recovery with immutable history, scan ledger idempotency, and artifact retention reconciliation.");
 } finally {
   if (database) await database.close();
   if (upgradeDirectory) await rm(upgradeDirectory, { recursive: true, force: true });

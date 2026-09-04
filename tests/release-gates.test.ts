@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { evaluateReleaseEvidence, ReleaseEvidenceBundleSchema } from "../packages/release-gates/src/index.ts";
+import {
+  evaluateReleaseEvidence,
+  FaultInjectionReceiptSchema,
+  ReleaseEvidenceBundleSchema,
+  RestoreDrillReceiptSchema,
+} from "../packages/release-gates/src/index.ts";
 
 const releaseCommit = "a".repeat(40);
 const registryDigest = "b".repeat(64);
@@ -76,5 +81,49 @@ describe("release evidence gates", () => {
     evidence.snapshots[4].registryDigest = "c".repeat(64);
     const result = evaluateReleaseEvidence(evidence);
     expect(result.gates.find((gate) => gate.id === "evidence-subject")?.passed).toBe(false);
+  });
+
+  test("accepts only aggregate, isolated restore evidence", () => {
+    const receipt = {
+      schemaVersion: 1,
+      completedAt: "2026-09-11T01:00:00.000Z",
+      releaseCommit,
+      sourceSnapshotAt: "2026-09-11T00:58:00.000Z",
+      isolation: { outboundNetworkDisabled: true, workerPausedDuringSnapshot: true },
+      database: {
+        passed: true, tableCount: 36, sourceRowCount: 80_000, restoredRowCount: 80_000,
+        migrationCount: 9, countsMatched: true, migrationsMatched: true,
+      },
+      artifacts: {
+        passed: true, sourceFileCount: 2_000, restoredFileCount: 2_000,
+        sourceBytes: 42_000_000, restoredBytes: 42_000_000,
+        sourceTreeDigest: "c".repeat(64), restoredTreeDigest: "c".repeat(64), digestsMatched: true,
+      },
+      recoveryTimeSeconds: 91.5,
+      cleanupPassed: true,
+    };
+    expect(RestoreDrillReceiptSchema.parse(receipt).cleanupPassed).toBe(true);
+    expect(() => RestoreDrillReceiptSchema.parse({ ...receipt,
+      isolation: { ...receipt.isolation, outboundNetworkDisabled: false } })).toThrow();
+    expect(() => RestoreDrillReceiptSchema.parse({ ...receipt, rawRows: [] })).toThrow();
+  });
+
+  test("requires all named fault points and an upgrade-rollback sequence", () => {
+    const receipt = {
+      schemaVersion: 1,
+      completedAt: "2026-09-11T01:00:00.000Z",
+      releaseCommit,
+      connectorOutage: { failedAttempts: 2, closureEventsCreated: 0, lifecycleStatePreserved: true },
+      workerCrash: {
+        points: ["afterFetch", "afterArtifacts", "beforeCommit"], partialCommitsCreated: 0,
+        artifactsDeduplicated: true, retryCommittedOnce: true,
+      },
+      connectorRollback: { executedVersions: ["1.0.0", "1.1.0", "1.0.0"], finalizedHistoryPreserved: true },
+    };
+    expect(FaultInjectionReceiptSchema.parse(receipt).connectorOutage.closureEventsCreated).toBe(0);
+    expect(() => FaultInjectionReceiptSchema.parse({ ...receipt,
+      workerCrash: { ...receipt.workerCrash, points: ["afterFetch", "beforeCommit"] } })).toThrow();
+    expect(() => FaultInjectionReceiptSchema.parse({ ...receipt,
+      connectorOutage: { ...receipt.connectorOutage, closureEventsCreated: 1 } })).toThrow();
   });
 });
