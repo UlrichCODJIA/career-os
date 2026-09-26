@@ -6,3 +6,4 @@
 artifacts
 dist
 node_modules
+private/
