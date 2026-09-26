@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { PostgresCompanyResolutionStore } from "./company-resolution.ts";
 import { PostgresLifecycleStore } from "./lifecycle.ts";
 import { PostgresOpportunityResolutionStore } from "./opportunity-resolution.ts";
+import { PostgresEmptyBoards, type ConfirmEmptyBoardInput, type CloseEmptyBoardInput } from "./empty-boards.ts";
 
 export interface OperatorContext { actorId: string; idempotencyKey: string }
 export interface CompanyReviewDecision { reviewId: string; sourceCompanyId: string; canonicalCompanyId: string; resolverVersion: string; confidence: number; reason: string }
@@ -15,6 +16,10 @@ export interface OperatorConsoleService {
   reviews(state?: "pending" | "approved" | "rejected"): Promise<Record<string, unknown>>;
   review(reviewId: string): Promise<Record<string, unknown> | null>;
   sourceEvidence(sourceId: string): Promise<Record<string, unknown> | null>;
+  emptyBoardReviews(): Promise<Record<string, unknown>>;
+  confirmEmptyBoard(context: OperatorContext, reviewId: string, input: ConfirmEmptyBoardInput): Promise<Record<string, unknown>>;
+  rejectEmptyBoard(context: OperatorContext, reviewId: string, reason: string): Promise<Record<string, unknown>>;
+  closeEmptyBoard(context: OperatorContext, sourceId: string, input: CloseEmptyBoardInput): Promise<Record<string, unknown>>;
   clearBreaker(context: OperatorContext, breakerId: string, reason: string): Promise<unknown>;
   mergeCompanyReview(context: OperatorContext, input: CompanyReviewDecision): Promise<unknown>;
   splitCompany(context: OperatorContext, input: CompanySplitDecision): Promise<unknown>;
@@ -65,17 +70,35 @@ export class PostgresOperatorConsole implements OperatorConsoleService {
   private readonly companies: PostgresCompanyResolutionStore;
   private readonly opportunities: PostgresOpportunityResolutionStore;
   private readonly lifecycle: PostgresLifecycleStore;
+  private readonly emptyBoards: PostgresEmptyBoards;
 
   constructor(private readonly sql: SQL) {
     this.companies = new PostgresCompanyResolutionStore(sql);
     this.opportunities = new PostgresOpportunityResolutionStore(sql);
     this.lifecycle = new PostgresLifecycleStore(sql);
+    this.emptyBoards = new PostgresEmptyBoards(sql);
+  }
+
+  emptyBoardReviews(): Promise<Record<string, unknown>> { return this.emptyBoards.reviews(); }
+  confirmEmptyBoard(context: OperatorContext, reviewId: string, input: ConfirmEmptyBoardInput): Promise<Record<string, unknown>> {
+    return this.emptyBoards.confirm(context, reviewId, input);
+  }
+  rejectEmptyBoard(context: OperatorContext, reviewId: string, reason: string): Promise<Record<string, unknown>> {
+    return this.emptyBoards.reject(context, reviewId, reason);
+  }
+  closeEmptyBoard(context: OperatorContext, sourceId: string, input: CloseEmptyBoardInput): Promise<Record<string, unknown>> {
+    return this.emptyBoards.close(context, sourceId, input);
   }
 
   async overview(): Promise<Record<string, unknown>> {
     const [sourceRows, reviewRows, breakerRows, scanRows] = await Promise.all([
       this.sql<Record<string, unknown>[]>`SELECT health_state AS state, count(*)::int AS count FROM sources GROUP BY health_state ORDER BY health_state`,
-      this.sql<Record<string, unknown>[]>`SELECT review_type AS type, count(*)::int AS count FROM resolution_reviews WHERE state = 'pending' GROUP BY review_type ORDER BY review_type`,
+      this.sql<Record<string, unknown>[]>`SELECT type, count FROM (
+        SELECT review_type AS type, count(*)::int AS count FROM resolution_reviews
+          WHERE state = 'pending' GROUP BY review_type
+        UNION ALL
+        SELECT 'empty_board' AS type, count(*)::int AS count FROM source_empty_reviews WHERE state = 'pending'
+      ) review_counts ORDER BY type`,
       this.sql<Record<string, unknown>[]>`SELECT count(*)::int AS count FROM lifecycle_circuit_breakers WHERE state = 'tripped'`,
       this.sql<Record<string, unknown>[]>`SELECT completeness_reason AS reason, count(*)::int AS count FROM source_scans WHERE ended_at >= clock_timestamp() - interval '24 hours' GROUP BY completeness_reason ORDER BY completeness_reason`,
     ]);
@@ -99,11 +122,14 @@ export class PostgresOperatorConsole implements OperatorConsoleService {
   }
 
   async sourceEvidence(sourceId: string): Promise<Record<string, unknown> | null> {
-    const source = (await this.sql<Array<{ id: string; connectorId: string; connectorVersion: string; enabled: boolean; healthState: string; boardUrl: string | null; lastAttemptAt: Date | string | null; lastSuccessAt: Date | string | null }>[number][]>`
-      SELECT id, connector_id AS "connectorId", connector_version AS "connectorVersion", enabled, health_state AS "healthState",
+    const source = (await this.sql<Array<{ id: string; connectorId: string; connectorVersion: string; enabled: boolean;
+      healthState: string; inventoryState: string; boardUrl: string | null; lastAttemptAt: Date | string | null;
+      lastSuccessAt: Date | string | null }>[number][]>`
+      SELECT id, connector_id AS "connectorId", connector_version AS "connectorVersion", enabled,
+        health_state AS "healthState", inventory_state AS "inventoryState",
         board_url AS "boardUrl", last_attempt_at AS "lastAttemptAt", last_success_at AS "lastSuccessAt" FROM sources WHERE id = ${sourceId}`)[0];
     if (!source) return null;
-    const [scans, breakers] = await Promise.all([
+    const [scans, breakers, ownershipEvidence] = await Promise.all([
       this.sql<Record<string, unknown>[]>`SELECT scan.id, scan.completeness_state AS "state", scan.completeness_reason AS "reason",
           scan.observed_job_count AS "jobCount", scan.response_count AS "responseCount", scan.byte_count AS "byteCount", scan.ended_at AS "endedAt",
           coalesce(jsonb_agg(jsonb_build_object('id', artifact.id, 'sha256', artifact.sha256, 'byteLength', artifact.byte_length,
@@ -117,8 +143,11 @@ export class PostgresOperatorConsole implements OperatorConsoleService {
           reason, baseline_count AS "baselineCount", observed_count AS "observedCount", anomaly_ratio AS "anomalyRatio", state, created_at AS "createdAt"
         FROM lifecycle_circuit_breakers WHERE source_id = ${sourceId} OR (source_id IS NULL AND connector_id = ${source.connectorId}
           AND connector_version = ${source.connectorVersion}) ORDER BY created_at DESC, id DESC LIMIT 20`,
+      this.sql<Record<string, unknown>[]>`SELECT id, evidence_type AS "type", confidence, recorded_at AS "recordedAt"
+        FROM ownership_evidence WHERE source_id = ${sourceId} ORDER BY confidence DESC, recorded_at DESC LIMIT 20`,
     ]);
-    return { source: { ...source, boardUrl: undefined, boardOrigin: origin(source.boardUrl) }, scans, breakers, rawArtifactAccess: { available: false, reason: "raw_artifacts_require_separate_privileged_viewer" } };
+    return { source: { ...source, boardUrl: undefined, boardOrigin: origin(source.boardUrl) }, scans, breakers,
+      ownershipEvidence, rawArtifactAccess: { available: false, reason: "raw_artifacts_require_separate_privileged_viewer" } };
   }
 
   clearBreaker(context: OperatorContext, breakerId: string, reason: string): Promise<unknown> {

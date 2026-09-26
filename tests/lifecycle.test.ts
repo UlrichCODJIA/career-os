@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CLOSURE_CONFIRMATION_MS, confirmsNeverPopulatedEmptySource, decideListingLifecycle, evaluateClosureCircuitBreaker } from "../packages/lifecycle/src/index.ts";
+import { CLOSURE_CONFIRMATION_MS, confirmsNeverPopulatedEmptySource, decideListingLifecycle, evaluateClosureCircuitBreaker,
+  qualifiesHistoricalEmptyPair } from "../packages/lifecycle/src/index.ts";
 
 describe("listing lifecycle", () => {
   const t0 = "2026-01-01T00:00:00.000Z";
@@ -50,5 +51,19 @@ describe("never-populated empty source confirmation", () => {
     expect(confirmsNeverPopulatedEmptySource({ ...candidate, historicalListingCount: 1 })).toBe(false);
     expect(confirmsNeverPopulatedEmptySource({ ...candidate, activeListingCount: 1 })).toBe(false);
     expect(confirmsNeverPopulatedEmptySource({ ...candidate, connectorReason: "complete" })).toBe(false);
+  });
+});
+
+describe("historical empty board review pair", () => {
+  const candidate = { firstReason: "suspicious_empty", secondReason: "suspicious_empty",
+    firstJobCount: 0, secondJobCount: 0, firstBoardHash: "a".repeat(64), secondBoardHash: "a".repeat(64),
+    firstEndedAt: "2026-09-04T00:00:00.000Z", secondEndedAt: "2026-09-04T00:30:00.000Z" };
+  test("requires same hash and a 30-minute to 24-hour window", () => {
+    expect(qualifiesHistoricalEmptyPair(candidate)).toBe(true);
+    expect(qualifiesHistoricalEmptyPair({ ...candidate, secondEndedAt: "2026-09-04T00:29:59.999Z" })).toBe(false);
+    expect(qualifiesHistoricalEmptyPair({ ...candidate, secondEndedAt: "2026-09-05T00:00:00.001Z" })).toBe(false);
+    expect(qualifiesHistoricalEmptyPair({ ...candidate, secondBoardHash: "b".repeat(64) })).toBe(false);
+    expect(qualifiesHistoricalEmptyPair({ ...candidate, secondReason: "schema_invalid" })).toBe(false);
+    expect(qualifiesHistoricalEmptyPair({ ...candidate, secondJobCount: 1 })).toBe(false);
   });
 });

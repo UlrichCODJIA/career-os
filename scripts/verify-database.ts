@@ -13,6 +13,8 @@ import {
   PostgresOperatorConsole,
   PostgresDiscoveryApi,
   PostgresScanLedger,
+  PostgresEmptyBoards,
+  projectSourceOpportunities,
   PostgresWorkQueue,
   WORK_QUEUE_SCHEDULER_LOCK_KEY,
 } from "../packages/db/src/index.ts";
@@ -61,29 +63,29 @@ try {
   await admin.unsafe(`CREATE DATABASE ${quotedDatabase} TEMPLATE template0`);
 
   const concurrent = await Promise.all([migrate({ databaseUrl: testUrl }), migrate({ databaseUrl: testUrl })]);
-  assert(concurrent.flatMap((result) => result.applied).length === 10, "concurrent migration runners must apply each file once");
-  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 10, "waiting migration runner must verify every applied file");
+  assert(concurrent.flatMap((result) => result.applied).length === 11, "concurrent migration runners must apply each file once");
+  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 11, "waiting migration runner must verify every applied file");
 
   const replay = await migrate({ databaseUrl: testUrl });
-  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 10, "migration replay must be a verified no-op");
+  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 11, "migration replay must be a verified no-op");
 
   const productionDirectory = resolve(import.meta.dir, "../db/migrations");
   const productionMigrations = await loadMigrationFiles(productionDirectory);
-  assert(productionMigrations.length === 10, "all production migrations must exist");
+  assert(productionMigrations.length === 11, "all production migrations must exist");
   upgradeDirectory = await mkdtemp(join(tmpdir(), "career-os-migrations-"));
   for (const migration of productionMigrations) {
     await writeFile(join(upgradeDirectory, migration.name), migration.content, "utf8");
   }
   await writeFile(
-    join(upgradeDirectory, "0011_forward_upgrade_probe.sql"),
+    join(upgradeDirectory, "0012_forward_upgrade_probe.sql"),
     "CREATE TABLE migration_forward_probe (id integer PRIMARY KEY);\n",
     "utf8",
   );
   const upgrade = await migrate({ databaseUrl: testUrl, directory: upgradeDirectory });
-  assert(upgrade.applied.join() === "0011_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
+  assert(upgrade.applied.join() === "0012_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
 
   await writeFile(
-    join(upgradeDirectory, "0012_atomic_failure_probe.sql"),
+    join(upgradeDirectory, "0013_atomic_failure_probe.sql"),
     "CREATE TABLE migration_atomic_failure_probe (id integer PRIMARY KEY);\nSELECT missing_function_for_atomicity_test();\n",
     "utf8",
   );
@@ -96,17 +98,17 @@ try {
   const atomicFailure = await database<{ tableExists: boolean; ledgerRows: number }[]>`
     SELECT
       to_regclass('public.migration_atomic_failure_probe') IS NOT NULL AS "tableExists",
-      (SELECT count(*)::int FROM schema_migrations WHERE name = '0012_atomic_failure_probe.sql') AS "ledgerRows"
+      (SELECT count(*)::int FROM schema_migrations WHERE name = '0013_atomic_failure_probe.sql') AS "ledgerRows"
   `;
   assert(!atomicFailure[0]?.tableExists && atomicFailure[0]?.ledgerRows === 0, "failed migration and ledger write must roll back together");
 
   const originalUpgradeChecksum = (await database<{ checksum: string }[]>`
-    SELECT checksum FROM schema_migrations WHERE name = '0011_forward_upgrade_probe.sql'
+    SELECT checksum FROM schema_migrations WHERE name = '0012_forward_upgrade_probe.sql'
   `)[0]?.checksum;
   assert(originalUpgradeChecksum !== undefined, "forward migration checksum must be recorded");
-  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0011_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0012_forward_upgrade_probe.sql'`;
   await expectRejected(migrate({ databaseUrl: testUrl, directory: upgradeDirectory }), "checksum drift must reject migration startup");
-  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0011_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0012_forward_upgrade_probe.sql'`;
 
   const expectedTables = [
     "artifacts",
@@ -138,6 +140,10 @@ try {
     "resolution_reviews",
     "schema_migrations",
     "source_candidates",
+    "source_empty_closure_decisions",
+    "source_empty_confirmation_events",
+    "source_empty_confirmations",
+    "source_empty_reviews",
     "source_listings",
     "source_observations",
     "source_policies",
@@ -809,7 +815,9 @@ try {
       boardHash: `lifecycle-${endedAt.toISOString()}` });
   }
   const firstMissingAt = new Date(scanEnded.getTime() + 31 * 60_000);
-  const firstMissingScan = await commitLifecycleScan(firstMissingAt, []);
+  const retainedObservations = [{ ...completeScanInput.observations[0]!, sourceJobId: "verification-job-2",
+    semanticFingerprint: "semantic-retained-v1" }];
+  const firstMissingScan = await commitLifecycleScan(firstMissingAt, retainedObservations);
   const possible = (await database<{ state: string; misses: number; opportunityStatus: string; absence: boolean }[]>`SELECT
       listing.lifecycle_state AS state, listing.consecutive_complete_misses AS misses,
       (SELECT status FROM opportunities WHERE id = ${createdOpportunity.opportunityId}) AS "opportunityStatus",
@@ -818,7 +826,7 @@ try {
   assert(possible?.state === "possibly_closed" && possible.misses === 1 && possible.opportunityStatus === "possibly_closed" && possible.absence,
     "first qualifying absence must project possibly-closed without confirming closure");
   const confirmedAt = new Date(firstMissingAt.getTime() + 31 * 60_000);
-  await commitLifecycleScan(confirmedAt, []);
+  await commitLifecycleScan(confirmedAt, retainedObservations);
   const closedLifecycle = (await database<{ state: string; closedAt: Date | null; opportunityStatus: string }[]>`SELECT
       listing.lifecycle_state AS state, listing.closed_at AS "closedAt",
       (SELECT status FROM opportunities WHERE id = ${createdOpportunity.opportunityId}) AS "opportunityStatus"
@@ -928,7 +936,7 @@ try {
     sourceId: verified.sourceId,
     connectorId: "greenhouse",
     connectorVersion: "1.0.0",
-    tenantKey: "acme",
+    tenantKey: "registry-example",
     cadenceBucket: 1,
   });
   await database`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at, max_attempts)
@@ -999,6 +1007,161 @@ try {
   assert(recoveryEvidence?.terminal === 1 && recoveryEvidence.recovered === 1 && recoveryEvidence.audits === 1,
     "recovery must retain terminal history and append exactly one aggregate operator audit event");
 
+  const emptyBoards = new PostgresEmptyBoards(database);
+  const emptyHash = "a".repeat(64);
+  const emptyWorker = "historical-empty-verifier";
+  async function historicalEmptyScan(endedAt: Date, jobId = crypto.randomUUID(), boardHash = emptyHash) {
+    const token = crypto.randomUUID();
+    await database!`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at,
+      attempt, leased_at, lease_expires_at, lease_owner, lease_token, lease_generation)
+      VALUES (${jobId}, ${"scan_source"}, ${`historical-empty:${jobId}`}, ${"{}"}::text::jsonb,
+        ${"leased"}, ${endedAt}, ${1}, ${new Date()}, ${new Date(Date.now() + 2 * 60 * 60_000)},
+        ${emptyWorker}, ${token}, ${1})`;
+    const input = { ...completeScanInput, lease: { id: jobId, leaseToken: token, leaseGeneration: 1 },
+      workerId: emptyWorker, startedAt: new Date(endedAt.getTime() - 100), endedAt,
+      completenessReason: "suspicious_empty" as const, observations: [], boardHash };
+    return { input, result: await scanLedger.commit(input) };
+  }
+  const historicalFirstAt = new Date(queueTime.value.getTime() + 60 * 60_000);
+  const historicalFirst = await historicalEmptyScan(historicalFirstAt);
+  const historicalSecond = await historicalEmptyScan(new Date(historicalFirstAt.getTime() + 31 * 60_000));
+  const historicalReplay = await scanLedger.commit(historicalSecond.input);
+  assert(historicalReplay.replayed && historicalReplay.scanId === historicalSecond.result.scanId,
+    "historical empty delivery must replay one immutable scan");
+  const pending = (await database<{ id: string; state: string; first_scan_id: string; second_scan_id: string }[]>`
+    SELECT id, state, first_scan_id, second_scan_id FROM source_empty_reviews WHERE source_id = ${verified.sourceId}
+      AND state = 'pending'`)[0];
+  assert(pending?.first_scan_id === historicalFirst.result.scanId && pending.second_scan_id === historicalSecond.result.scanId,
+    "two matching historical empties must queue exactly one review without closing listings");
+  const beforeReview = (await database<{ health: string; inventory: string; active: number; closed: number }[]>`
+    SELECT source.health_state AS health, source.inventory_state AS inventory,
+      (SELECT count(*)::int FROM source_listings WHERE source_id = source.id AND lifecycle_state = 'active') AS active,
+      (SELECT count(*)::int FROM source_listings WHERE source_id = source.id AND lifecycle_state = 'closed') AS closed
+      FROM sources source WHERE source.id = ${verified.sourceId}`)[0];
+  assert(beforeReview?.health === "degraded" && beforeReview.inventory === "suspected_empty" && beforeReview.active > 0,
+    "historical empty scans must degrade health while retaining active listings until operator review");
+  const ownership = (await database<{ id: string; domain: string }[]>`SELECT evidence.id, company.primary_domain AS domain
+    FROM ownership_evidence evidence JOIN companies company ON company.id = evidence.company_id
+    WHERE evidence.source_id = ${verified.sourceId} ORDER BY evidence.confidence DESC LIMIT 1`)[0];
+  assert(ownership?.id && ownership.domain, "historical empty fixture needs reviewed ownership evidence");
+  const confirmationInput = { firstScanId: historicalFirst.result.scanId, secondScanId: historicalSecond.result.scanId,
+    ownershipEvidenceId: ownership.id, employerCareersUrl: `https://${ownership.domain}/careers`,
+    attestsExactBoardLink: true as const, reason: "Operator fixture confirms exact employer-owned board link" };
+  const originalBoardUrl = (await database<{ board_url: string }[]>`SELECT board_url FROM sources
+    WHERE id = ${verified.sourceId}`)[0]!.board_url;
+  await database`UPDATE sources SET board_url = ${`${originalBoardUrl}-moved`} WHERE id = ${verified.sourceId}`;
+  await expectRejected(emptyBoards.confirm({ actorId: "empty-board-operator", idempotencyKey: "empty-confirm-moved" },
+    pending!.id, confirmationInput), "moved ATS board must invalidate the pending review");
+  await database`UPDATE sources SET board_url = ${originalBoardUrl} WHERE id = ${verified.sourceId}`;
+  const secondaryListingId = crypto.randomUUID();
+  await database`INSERT INTO source_listings (id, source_id, source_job_id, canonical_source_url,
+    apply_url, first_seen_at, last_seen_open_at) VALUES (${secondaryListingId}, ${emptySourceId},
+      ${"secondary-active-member"}, ${"https://example.test/jobs/secondary"},
+      ${"https://example.test/jobs/secondary/apply"}, ${new Date()}, ${new Date()})`;
+  await database`INSERT INTO opportunity_members (id, opportunity_id, source_listing_id, membership_reason,
+    resolver_version, confidence, state) VALUES (${crypto.randomUUID()}, ${createdOpportunity.opportunityId},
+      ${secondaryListingId}, ${"independent active source"}, ${"verification-v1"}, ${0.99}, ${"automatic"})`;
+  const confirmation = await emptyBoards.confirm({ actorId: "empty-board-operator", idempotencyKey: "empty-confirm-0001" },
+    pending!.id, confirmationInput);
+  const confirmationReplay = await emptyBoards.confirm({ actorId: "empty-board-operator", idempotencyKey: "empty-confirm-0001" },
+    pending!.id, confirmationInput);
+  assert(confirmation.confirmationId === confirmationReplay.confirmationId && Number(confirmation.heldListings) > 0,
+    "operator confirmation must be idempotent and place historical listings on hold");
+  const held = (await database<{ held: number; active: number; opportunity: string }[]>`
+    SELECT (SELECT count(*)::int FROM source_listings WHERE source_id = ${verified.sourceId}
+      AND closure_hold_confirmation_id = ${String(confirmation.confirmationId)}) AS held,
+      (SELECT count(*)::int FROM source_listings WHERE source_id = ${verified.sourceId}
+        AND lifecycle_state = 'active') AS active,
+      (SELECT status FROM opportunities WHERE id = ${createdOpportunity.opportunityId}) AS opportunity`)[0];
+  assert(held !== undefined && held.held === confirmation.heldListings && held.active === 0 && held.opportunity === "active",
+    "an independently active member must keep the canonical opportunity active after one source is held");
+  await database`UPDATE opportunity_members SET state = 'human_rejected'
+    WHERE opportunity_id = ${createdOpportunity.opportunityId} AND source_listing_id = ${secondaryListingId}`;
+  await database.begin(async (tx) => projectSourceOpportunities(tx, verified.sourceId,
+    historicalSecond.result.scanId, "empty-board-operator", "secondary_member_rejected"));
+  const heldOnlyOpportunity = (await database<{ status: string }[]>`SELECT status FROM opportunities
+    WHERE id = ${createdOpportunity.opportunityId}`)[0];
+  assert(heldOnlyOpportunity?.status === "possibly_closed",
+    "held-only opportunity must leave default active search after its independent active member is removed");
+  const canaryAt = new Date(historicalFirstAt.getTime() + 62 * 60_000);
+  const canary = await historicalEmptyScan(canaryAt);
+  const canaryState = (await database<{ health: string; inventory: string; reason: string; absence: boolean }[]>`
+    SELECT source.health_state AS health, source.inventory_state AS inventory,
+      scan.completeness_reason AS reason, scan.successful_for_absence_inference AS absence
+      FROM sources source JOIN source_scans scan ON scan.id = ${canary.result.scanId}
+      WHERE source.id = ${verified.sourceId}`)[0];
+  assert(canaryState?.health === "healthy" && canaryState.inventory === "confirmed_empty"
+    && canaryState.reason === "complete" && !canaryState.absence,
+  "matching post-review empty canary must be complete but ineligible for automatic closure");
+  await expectRejected(emptyBoards.close({ actorId: "empty-board-operator", idempotencyKey: "empty-close-too-early" },
+    verified.sourceId, { confirmationId: String(confirmation.confirmationId), expectedListingCount: held!.held,
+      reason: "Insufficient post-approval scan separation" }),
+  "one post-review canary cannot authorize bulk closure");
+  await historicalEmptyScan(new Date(canaryAt.getTime() + 31 * 60_000));
+  const stillHeld = (await database<{ count: number }[]>`SELECT count(*)::int AS count FROM source_listings
+    WHERE source_id = ${verified.sourceId} AND closure_hold_confirmation_id = ${String(confirmation.confirmationId)}
+      AND lifecycle_state = 'possibly_closed'`)[0]?.count;
+  assert(stillHeld === held!.held, "repeated automatic empty scans must not permanently close held listings");
+  await expectRejected(emptyBoards.close({ actorId: "empty-board-operator", idempotencyKey: "empty-close-wrong-count" },
+    verified.sourceId, { confirmationId: String(confirmation.confirmationId), expectedListingCount: held!.held + 1,
+      reason: "Deliberately mismatched closure count" }),
+  "bulk closure must reject an incorrect expected affected-listing count");
+  const closure = await emptyBoards.close({ actorId: "empty-board-operator", idempotencyKey: "empty-close-0001" },
+    verified.sourceId, { confirmationId: String(confirmation.confirmationId),
+      expectedListingCount: held!.held, reason: "Separate operator fixture approves bulk closure after post-review scans" });
+  assert(closure.closedListings === held!.held, "bulk closure must require a separate operator decision and expected count");
+  const reopenedEmpty = await historicalEmptyScan(new Date(canaryAt.getTime() + 62 * 60_000), crypto.randomUUID(), "b".repeat(64));
+  const changedHash = (await database<{ health: string; inventory: string; invalidations: number }[]>`
+    SELECT source.health_state AS health, source.inventory_state AS inventory,
+      (SELECT count(*)::int FROM source_empty_confirmation_events event
+        WHERE event.confirmation_id = ${String(confirmation.confirmationId)} AND event.event_type = 'invalidated') AS invalidations
+    FROM sources source WHERE source.id = ${verified.sourceId}`)[0];
+  assert(reopenedEmpty.result.observationCount === 0 && changedHash?.health === "degraded"
+    && changedHash.inventory === "suspected_empty" && changedHash.invalidations === 1,
+    "changed empty hash must invalidate confirmation and degrade health without new closures");
+  await commitLifecycleScan(new Date(canaryAt.getTime() + 93 * 60_000), completeScanInput.observations);
+  const reappeared = (await database<{ state: string; status: string }[]>`SELECT listing.lifecycle_state AS state,
+    opportunity.status FROM source_listings listing JOIN opportunity_members member
+      ON member.source_listing_id = listing.id JOIN opportunities opportunity ON opportunity.id = member.opportunity_id
+    WHERE listing.id = ${evidenceRows[0]!.listingId} AND opportunity.id = ${createdOpportunity.opportunityId}`)[0];
+  assert(reappeared?.state === "active" && reappeared.status === "active",
+    "reappearing source identity must reopen the listing and canonical opportunity");
+  await historicalEmptyScan(new Date(canaryAt.getTime() + 124 * 60_000), crypto.randomUUID(), "c".repeat(64));
+  const interruptionId = crypto.randomUUID();
+  const interruptionToken = crypto.randomUUID();
+  await database`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at,
+    attempt, leased_at, lease_expires_at, lease_owner, lease_token, lease_generation)
+    VALUES (${interruptionId}, ${"scan_source"}, ${`historical-interruption:${interruptionId}`},
+      ${JSON.stringify({ tenantKey: "registry-example" })}::text::jsonb, ${"leased"}, ${new Date()}, ${1},
+      ${new Date()}, ${new Date(Date.now() + 2 * 60 * 60_000)}, ${emptyWorker}, ${interruptionToken}, ${1})`;
+  await scanLedger.fail({ lease: { id: interruptionId, leaseToken: interruptionToken, leaseGeneration: 1 },
+    workerId: emptyWorker, sourceId: verified.sourceId,
+    startedAt: new Date(canaryAt.getTime() + 155 * 60_000 - 100),
+    endedAt: new Date(canaryAt.getTime() + 155 * 60_000), connectorId: "greenhouse",
+    connectorVersion: "1.0.0", safeFetchPolicyVersion: "1.0.0", policyId: policyResult.policy.id,
+    fetchMetadata: { requestCount: 0 }, reason: "transport_failure", errorCode: "upstream_timeout", retryable: false });
+  await historicalEmptyScan(new Date(canaryAt.getTime() + 186 * 60_000), crypto.randomUUID(), "c".repeat(64));
+  const prematureReviews = (await database<{ count: number }[]>`SELECT count(*)::int AS count
+    FROM source_empty_reviews WHERE source_id = ${verified.sourceId} AND state = 'pending'`)[0]?.count;
+  assert(prematureReviews === 0, "transport failure between matching empty scans must disqualify the pair");
+  await historicalEmptyScan(new Date(canaryAt.getTime() + 217 * 60_000), crypto.randomUUID(), "c".repeat(64));
+  const rejectedReview = (await database<{ id: string }[]>`SELECT id FROM source_empty_reviews
+    WHERE source_id = ${verified.sourceId} AND state = 'pending'`)[0];
+  assert(rejectedReview?.id, "fresh uninterrupted pair must create a new review candidate");
+  const rejection = await emptyBoards.reject({ actorId: "empty-board-operator", idempotencyKey: "empty-reject-0001" },
+    rejectedReview.id, "Current employer careers page no longer links to this ATS board");
+  const rejectionReplay = await emptyBoards.reject({ actorId: "empty-board-operator", idempotencyKey: "empty-reject-0001" },
+    rejectedReview.id, "Current employer careers page no longer links to this ATS board");
+  assert(rejection.state === "rejected" && rejectionReplay.reviewId === rejection.reviewId,
+    "human rejection must be audited and idempotent without creating closure holds");
+  await historicalEmptyScan(new Date(canaryAt.getTime() + 248 * 60_000), crypto.randomUUID(), "c".repeat(64));
+  const rejectedRepeat = (await database<{ pending: number; rejected: number }[]>`SELECT
+    count(*) FILTER (WHERE state = 'pending')::int AS pending,
+    count(*) FILTER (WHERE state = 'rejected')::int AS rejected
+    FROM source_empty_reviews WHERE source_id = ${verified.sourceId}`)[0];
+  assert(rejectedRepeat?.pending === 0 && rejectedRepeat.rejected === 1,
+    "a rejected unchanged board snapshot must not regenerate the same review indefinitely");
+
   const concurrentRetentionClaims = await Promise.all([
     artifactMetadata.claimDue(artifactNow, 10),
     artifactMetadata.claimDue(artifactNow, 10),
@@ -1013,7 +1176,7 @@ try {
   `)[0];
   assert(deletedArtifact?.state === "deleted" && deletedArtifact.deletedAt !== null, "retention must preserve deleted metadata as a tombstone");
 
-  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, lifecycle closure/reopening and circuit breakers, zero-closure connector outage injection, connector upgrade/rollback history, redacted operator evidence and audit replay, bounded canonical APIs and immutable reports, queue fencing, idempotent terminal recovery with immutable history, scan ledger idempotency, and artifact retention reconciliation.");
+  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, verified-empty review/hold/canary/separate closure/reappearance and interruption safety, lifecycle circuit breakers, zero-closure connector outage injection, connector upgrade/rollback history, redacted operator evidence and audit replay, bounded canonical APIs and immutable reports, queue fencing, idempotent terminal recovery with immutable history, scan ledger idempotency, and artifact retention reconciliation.");
 } finally {
   if (database) await database.close();
   if (upgradeDirectory) await rm(upgradeDirectory, { recursive: true, force: true });

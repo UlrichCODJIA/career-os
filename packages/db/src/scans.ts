@@ -1,6 +1,6 @@
 import type { SQL } from "bun";
 import { createHash } from "node:crypto";
-import { confirmsNeverPopulatedEmptySource, decideListingLifecycle, evaluateClosureCircuitBreaker, LIFECYCLE_VERSION } from "@career-os/lifecycle";
+import { confirmsNeverPopulatedEmptySource, decideListingLifecycle, evaluateClosureCircuitBreaker, qualifiesHistoricalEmptyPair, LIFECYCLE_VERSION } from "@career-os/lifecycle";
 
 export type ScanCompletenessReason = "complete" | "pagination_incomplete" | "schema_invalid" | "suspicious_empty" | "blocked" | "transport_failure" | "limit_exceeded";
 
@@ -98,6 +98,12 @@ function deliveryHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function sourceIdentityHash(source: { connector_id: string; connector_version: string; tenant_key: string;
+  board_url: string; api_base_url: string; region: string }): string {
+  return deliveryHash([source.connector_id, source.connector_version, source.tenant_key,
+    source.board_url, source.api_base_url, source.region]);
+}
+
 function validate(input: CompleteScanInput): void {
   if (!input.workerId.trim() || input.workerId.length > 200) throw new ScanLedgerError("invalid_worker_id");
   if (input.endedAt < input.startedAt) throw new ScanLedgerError("invalid_scan_time_order");
@@ -151,20 +157,31 @@ export class PostgresScanLedger {
         return { scanId: existing.id, observationCount: counts?.observations ?? 0, versionCount: counts?.versions ?? 0, replayed: true };
       }
 
-      const fenced = (await tx<{ id: string }[]>`
-        SELECT id FROM work_jobs WHERE id = ${input.lease.id} AND status = 'leased'
+      const fenced = (await tx<{ id: string; payload_json: Record<string, unknown> }[]>`
+        SELECT id, payload_json FROM work_jobs WHERE id = ${input.lease.id} AND status = 'leased'
           AND lease_owner = ${input.workerId} AND lease_token = ${input.lease.leaseToken}
           AND lease_generation = ${input.lease.leaseGeneration} AND lease_expires_at > clock_timestamp()
         FOR UPDATE
       `)[0];
       if (!fenced) throw new ScanLedgerError("stale_lease");
-      const source = (await tx<{ connector_id: string; connector_version: string; policy_id: string; last_job_count: number | null }[]>`
-        SELECT connector_id, connector_version, policy_id, last_job_count FROM sources WHERE id = ${input.sourceId} FOR UPDATE
+      const source = (await tx<{ connector_id: string; connector_version: string; tenant_key: string;
+        board_url: string; api_base_url: string; region: string; policy_id: string; policy_row_version: number;
+        last_job_count: number | null; policy_review_due_at: Date | string;
+        policy_state: string; policy_expires_at: Date | string }[]>`
+        SELECT source.connector_id, source.connector_version, source.tenant_key, source.policy_id,
+          source.board_url, source.api_base_url, source.region, policy.row_version AS policy_row_version,
+          source.last_job_count, source.policy_review_due_at, policy.state AS policy_state,
+          policy.expires_at AS policy_expires_at FROM sources source
+          JOIN source_policies policy ON policy.id = source.policy_id WHERE source.id = ${input.sourceId} FOR UPDATE OF source
       `)[0];
       if (!source) throw new ScanLedgerError("source_not_found");
       if (source.connector_id !== input.connectorId || source.connector_version !== input.connectorVersion || source.policy_id !== input.policyId) {
         throw new ScanLedgerError("source_snapshot_mismatch");
       }
+      if (typeof fenced.payload_json?.tenantKey === "string" && fenced.payload_json.tenantKey !== source.tenant_key) {
+        throw new ScanLedgerError("source_snapshot_mismatch");
+      }
+      const identityHash = sourceIdentityHash(source);
       await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`${input.connectorId}:${input.connectorVersion}`}, 918273645))`;
 
       const scanId = Bun.randomUUIDv7();
@@ -172,36 +189,91 @@ export class PostgresScanLedger {
         WHERE source_id = ${input.sourceId} AND lifecycle_state <> 'closed'`)[0]?.count ?? 0;
       const historicalListingCount = (await tx<{ count: number }[]>`SELECT count(*)::int AS count FROM source_listings
         WHERE source_id = ${input.sourceId}`)[0]?.count ?? 0;
-      const previousEmpty = (await tx<{ board_hash: string | null; ended_at: Date | string }[]>`
-        SELECT board_hash, ended_at FROM source_scans
-        WHERE source_id = ${input.sourceId} AND completeness_reason = 'suspicious_empty' AND ended_at IS NOT NULL
+      const previousScan = (await tx<{ id: string; board_hash: string | null; ended_at: Date | string;
+        completeness_reason: string; observed_job_count: number; http_outcome: string; response_count: number;
+        connector_id: string; connector_version: string; policy_id: string; policy_row_version: number | null;
+        safe_fetch_policy_version: string; source_identity_hash: string | null; fetch_metadata: unknown }[]>`
+        SELECT id, board_hash, ended_at, completeness_reason, observed_job_count, http_outcome,
+          response_count, connector_id, connector_version, policy_id, policy_row_version,
+          safe_fetch_policy_version, source_identity_hash, fetch_metadata FROM source_scans
+        WHERE source_id = ${input.sourceId} AND ended_at IS NOT NULL
         ORDER BY ended_at DESC, id DESC LIMIT 1
       `)[0];
-      const confirmedEmpty = confirmsNeverPopulatedEmptySource({
-        connectorReason: input.completenessReason,
+      const openConfirmation = (await tx<{ id: string; board_hash: string; connector_id: string;
+        connector_version: string; tenant_key: string; board_url: string; api_base_url: string;
+        region: string; policy_id: string; policy_row_version: number; safe_fetch_policy_version: string }[]>`
+        SELECT id, board_hash, connector_id, connector_version, tenant_key, board_url, api_base_url,
+          region, policy_id, policy_row_version, safe_fetch_policy_version
+        FROM source_empty_confirmations confirmation
+        WHERE confirmation.source_id = ${input.sourceId} AND confirmation.valid_until > clock_timestamp()
+          AND NOT EXISTS (SELECT 1 FROM source_empty_confirmation_events event
+            WHERE event.confirmation_id = confirmation.id AND event.event_type = 'invalidated')
+        ORDER BY confirmation.confirmed_at DESC LIMIT 1
+      `)[0];
+      const activeConfirmation = openConfirmation
+        && openConfirmation.connector_id === source.connector_id
+        && openConfirmation.connector_version === source.connector_version
+        && openConfirmation.tenant_key === source.tenant_key
+        && openConfirmation.board_url === source.board_url && openConfirmation.api_base_url === source.api_base_url
+        && openConfirmation.region === source.region && openConfirmation.policy_id === source.policy_id
+        && openConfirmation.policy_row_version === source.policy_row_version
+        && openConfirmation.safe_fetch_policy_version === input.safeFetchPolicyVersion ? openConfirmation : undefined;
+      const existingBreaker = (await tx<{ id: string }[]>`SELECT id FROM lifecycle_circuit_breakers
+        WHERE state = 'tripped' AND ((scope_type = 'source' AND source_id = ${input.sourceId})
+          OR (scope_type = 'connector_version' AND connector_id = ${input.connectorId} AND connector_version = ${input.connectorVersion}))
+        ORDER BY scope_type FOR UPDATE`)[0];
+      const connectorReason = input.completenessReason === "complete" && input.observations.length === 0
+        ? "suspicious_empty" : input.completenessReason;
+      const validEmptyShape = connectorReason === "suspicious_empty" && input.observations.length === 0
+        && input.responseArtifactIds.length > 0 && !!input.boardHash;
+      const reviewedEmpty = validEmptyShape && !!activeConfirmation && activeConfirmation.board_hash === input.boardHash
+        && new Date(source.policy_review_due_at).getTime() > input.endedAt.getTime()
+        && new Date(source.policy_expires_at).getTime() > input.endedAt.getTime()
+        && source.policy_state === "approved" && !existingBreaker;
+      const confirmedEmpty = !existingBreaker && confirmsNeverPopulatedEmptySource({
+        connectorReason,
         observedJobCount: input.observations.length,
         activeListingCount: activeBefore,
         historicalListingCount,
         boardHash: input.boardHash,
-        previousBoardHash: previousEmpty?.board_hash,
-        previousEmptyAt: previousEmpty ? new Date(previousEmpty.ended_at).toISOString() : undefined,
+        previousBoardHash: previousScan?.completeness_reason === "suspicious_empty" && previousScan.http_outcome === "succeeded"
+          && previousScan.response_count > 0 && previousScan.source_identity_hash === identityHash
+          && previousScan.policy_row_version === source.policy_row_version
+          && previousScan.safe_fetch_policy_version === input.safeFetchPolicyVersion ? previousScan.board_hash : undefined,
+        previousEmptyAt: previousScan?.completeness_reason === "suspicious_empty"
+          ? new Date(previousScan.ended_at).toISOString() : undefined,
         observedAt: input.endedAt.toISOString(),
       });
-      const completenessReason = confirmedEmpty ? "complete" : input.completenessReason;
+      const continuedNeverPopulatedEmpty = validEmptyShape && historicalListingCount === 0 && !existingBreaker
+        && previousScan?.completeness_reason === "complete" && previousScan.observed_job_count === 0
+        && previousScan.board_hash === input.boardHash && previousScan.http_outcome === "succeeded"
+        && previousScan.connector_id === input.connectorId && previousScan.connector_version === input.connectorVersion
+        && previousScan.source_identity_hash === identityHash
+        && previousScan.policy_id === input.policyId && previousScan.policy_row_version === source.policy_row_version
+        && previousScan.safe_fetch_policy_version === input.safeFetchPolicyVersion
+        && (previousScan.fetch_metadata as Record<string, unknown> | null)?.emptyConfirmation
+          === "two_separated_matching_empty_scans_without_listing_history"
+        && input.endedAt.getTime() - new Date(previousScan.ended_at).getTime() <= 24 * 60 * 60_000;
+      const completenessReason = confirmedEmpty || reviewedEmpty || continuedNeverPopulatedEmpty ? "complete" : connectorReason;
       const complete = completenessReason === "complete";
-      const fetchMetadata = confirmedEmpty
-        ? { ...input.fetchMetadata, emptyConfirmation: "two_separated_matching_empty_scans_without_listing_history" }
-        : input.fetchMetadata;
+      const fetchMetadata = reviewedEmpty
+        ? { ...input.fetchMetadata, emptyConfirmation: "operator_reviewed_historical_board",
+          emptyConfirmationId: activeConfirmation!.id }
+        : confirmedEmpty || continuedNeverPopulatedEmpty
+          ? { ...input.fetchMetadata, emptyConfirmation: "two_separated_matching_empty_scans_without_listing_history" }
+          : input.fetchMetadata;
       await tx`INSERT INTO source_scans (
         id, source_id, work_job_id, lease_generation, started_at, ended_at, http_outcome,
         response_count, byte_count, duration_ms, connector_id, connector_version,
-        safe_fetch_policy_version, policy_id, delivery_hash, fetch_metadata, completeness_state,
+        safe_fetch_policy_version, policy_id, policy_row_version, source_identity_hash,
+        delivery_hash, fetch_metadata, completeness_state,
         completeness_reason, observed_job_count, board_hash, added_count, changed_count,
         successful_for_absence_inference
       ) VALUES (
         ${scanId}, ${input.sourceId}, ${input.lease.id}, ${input.lease.leaseGeneration}, ${input.startedAt}, ${null},
         ${null}, ${input.responseArtifactIds.length}, ${input.byteCount}, ${null},
         ${input.connectorId}, ${input.connectorVersion}, ${input.safeFetchPolicyVersion}, ${input.policyId},
+        ${source.policy_row_version}, ${identityHash},
         ${inputHash}, ${boundedObject(fetchMetadata, "fetch_metadata")}::text::jsonb, ${"in_progress"},
         ${null}, ${input.observations.length}, ${input.boardHash ?? null}, ${0}, ${0}, ${false}
       )`;
@@ -210,11 +282,64 @@ export class PostgresScanLedger {
           VALUES (${scanId}, ${artifactId}, ${order})`;
       }
 
-      const existingBreaker = (await tx<{ id: string }[]>`SELECT id FROM lifecycle_circuit_breakers
-        WHERE state = 'tripped' AND ((scope_type = 'source' AND source_id = ${input.sourceId})
-          OR (scope_type = 'connector_version' AND connector_id = ${input.connectorId} AND connector_version = ${input.connectorVersion}))
-        ORDER BY scope_type FOR UPDATE`)[0];
-      const anomaly = complete ? evaluateClosureCircuitBreaker({ previousJobCount: source.last_job_count,
+      if (openConfirmation && (!activeConfirmation || input.observations.length > 0 || (validEmptyShape && !reviewedEmpty))) {
+        await tx`INSERT INTO source_empty_confirmation_events (id, confirmation_id, event_type, source_scan_id,
+          actor_type, reason) VALUES (${Bun.randomUUIDv7()}, ${openConfirmation.id}, ${"invalidated"},
+            ${scanId}, ${"system"}, ${input.observations.length > 0 ? "nonempty_board_reappeared" : "empty_board_identity_or_policy_changed"})
+          ON CONFLICT DO NOTHING`;
+      }
+      if (input.observations.length > 0) {
+        await tx`UPDATE source_listings SET closure_hold_confirmation_id = NULL,
+          consecutive_complete_misses = 0, first_missing_at = NULL
+          WHERE source_id = ${input.sourceId} AND closure_hold_confirmation_id IS NOT NULL`;
+      }
+      const pairEligible = historicalListingCount > 0 && validEmptyShape && /^[0-9a-f]{64}$/.test(input.boardHash!)
+        && !activeConfirmation && !existingBreaker
+        && previousScan?.http_outcome === "succeeded" && previousScan.response_count > 0
+        && previousScan.connector_id === input.connectorId && previousScan.connector_version === input.connectorVersion
+        && previousScan.source_identity_hash === identityHash
+        && previousScan.policy_id === input.policyId && previousScan.policy_row_version === source.policy_row_version
+        && previousScan.safe_fetch_policy_version === input.safeFetchPolicyVersion && qualifiesHistoricalEmptyPair({
+          firstReason: previousScan.completeness_reason, secondReason: connectorReason,
+          firstJobCount: previousScan.observed_job_count, secondJobCount: input.observations.length,
+          firstBoardHash: previousScan.board_hash, secondBoardHash: input.boardHash,
+          firstEndedAt: new Date(previousScan.ended_at).toISOString(), secondEndedAt: input.endedAt.toISOString(),
+        });
+      const pendingReview = (await tx<{ id: string; board_hash: string; connector_id: string;
+        connector_version: string; tenant_key: string; board_url: string; api_base_url: string;
+        region: string; policy_id: string; policy_row_version: number;
+        safe_fetch_policy_version: string }[]>`SELECT id, board_hash, connector_id, connector_version,
+          tenant_key, board_url, api_base_url, region, policy_id, policy_row_version, safe_fetch_policy_version
+        FROM source_empty_reviews WHERE source_id = ${input.sourceId} AND state = 'pending' FOR UPDATE`)[0];
+      const pendingMatches = pendingReview && pendingReview.board_hash === input.boardHash
+        && pendingReview.connector_id === source.connector_id && pendingReview.connector_version === source.connector_version
+        && pendingReview.tenant_key === source.tenant_key && pendingReview.board_url === source.board_url
+        && pendingReview.api_base_url === source.api_base_url && pendingReview.region === source.region
+        && pendingReview.policy_id === source.policy_id && pendingReview.policy_row_version === source.policy_row_version
+        && pendingReview.safe_fetch_policy_version === input.safeFetchPolicyVersion;
+      if (pendingReview && (!validEmptyShape || !pendingMatches || !!existingBreaker)) {
+        await tx`UPDATE source_empty_reviews SET state = 'superseded', decided_by = 'system',
+          decision_reason = 'subsequent_scan_disqualified_empty_review', decided_at = clock_timestamp()
+          WHERE id = ${pendingReview.id}`;
+      }
+      const rejectedSameSnapshot = pairEligible && (await tx<{ id: string }[]>`SELECT id FROM source_empty_reviews
+        WHERE source_id = ${input.sourceId} AND state = 'rejected' AND board_hash = ${input.boardHash!}
+          AND connector_id = ${source.connector_id} AND connector_version = ${source.connector_version}
+          AND tenant_key = ${source.tenant_key} AND board_url = ${source.board_url}
+          AND api_base_url = ${source.api_base_url} AND region = ${source.region}
+          AND policy_id = ${source.policy_id} AND policy_row_version = ${source.policy_row_version}
+          AND safe_fetch_policy_version = ${input.safeFetchPolicyVersion} LIMIT 1`)[0];
+      if (pairEligible && !pendingMatches && !rejectedSameSnapshot) {
+        await tx`INSERT INTO source_empty_reviews (id, source_id, first_scan_id, second_scan_id, board_hash,
+          connector_id, connector_version, tenant_key, board_url, api_base_url, region, policy_id,
+          policy_row_version, safe_fetch_policy_version, historical_listing_count)
+          VALUES (${Bun.randomUUIDv7()}, ${input.sourceId}, ${previousScan!.id}, ${scanId}, ${input.boardHash!},
+            ${input.connectorId}, ${input.connectorVersion}, ${source.tenant_key}, ${source.board_url},
+            ${source.api_base_url}, ${source.region}, ${input.policyId}, ${source.policy_row_version},
+            ${input.safeFetchPolicyVersion}, ${historicalListingCount})`;
+      }
+
+      const anomaly = complete && input.observations.length > 0 ? evaluateClosureCircuitBreaker({ previousJobCount: source.last_job_count,
         observedJobCount: input.observations.length, activeListingCount: activeBefore }) : { tripped: false as const };
       let breakerId = existingBreaker?.id;
       if (anomaly.tripped && !breakerId) {
@@ -247,7 +372,7 @@ export class PostgresScanLedger {
           }
         }
       }
-      const absenceEligible = complete && !breakerId;
+      const absenceEligible = complete && input.observations.length > 0 && !breakerId;
 
       let versionCount = 0;
       let addedCount = 0;
@@ -268,7 +393,7 @@ export class PostgresScanLedger {
           ) ON CONFLICT (source_id, source_job_id) DO UPDATE SET
             canonical_source_url = EXCLUDED.canonical_source_url, apply_url = EXCLUDED.apply_url,
             last_seen_open_at = EXCLUDED.last_seen_open_at, lifecycle_state = 'active', closed_at = NULL,
-            consecutive_complete_misses = 0, first_missing_at = NULL,
+            consecutive_complete_misses = 0, first_missing_at = NULL, closure_hold_confirmation_id = NULL,
             reopened_at = CASE WHEN source_listings.lifecycle_state <> 'active' THEN EXCLUDED.last_seen_open_at ELSE source_listings.reopened_at END
           RETURNING id, current_version_id
         `)[0]!;
@@ -321,11 +446,12 @@ export class PostgresScanLedger {
       if (absenceEligible) {
         const seen = new Set(input.observations.map((item) => item.sourceJobId));
         const candidates = await tx<{ id: string; source_job_id: string; lifecycle_state: "active" | "possibly_closed";
+          closure_hold_confirmation_id: string | null;
           consecutive_complete_misses: number; first_missing_at: Date | null }[]>`SELECT id, source_job_id, lifecycle_state,
-            consecutive_complete_misses, first_missing_at FROM source_listings
+            consecutive_complete_misses, first_missing_at, closure_hold_confirmation_id FROM source_listings
           WHERE source_id = ${input.sourceId} AND lifecycle_state <> 'closed' ORDER BY id FOR UPDATE`;
         for (const listing of candidates) {
-          if (seen.has(listing.source_job_id)) continue;
+          if (seen.has(listing.source_job_id) || listing.closure_hold_confirmation_id) continue;
           missingCount += 1;
           const decision = decideListingLifecycle({ state: listing.lifecycle_state,
             consecutiveCompleteMisses: listing.consecutive_complete_misses,
@@ -368,6 +494,8 @@ export class PostgresScanLedger {
         added_count = ${addedCount}, changed_count = ${changedCount}, missing_count = ${missingCount},
         reopened_count = ${reopenedCount}, closed_count = ${closedCount}, successful_for_absence_inference = ${absenceEligible}
         WHERE id = ${scanId}`;
+      const inventoryState = input.observations.length > 0 ? "observed_nonempty"
+        : complete && (reviewedEmpty || confirmedEmpty || continuedNeverPopulatedEmpty) && !breakerId ? "confirmed_empty" : "suspected_empty";
       await tx`UPDATE sources SET
         health_state = ${breakerId ? "quarantined" : healthFor(completenessReason)}, last_attempt_at = ${input.endedAt},
         last_success_at = ${input.endedAt},
@@ -378,7 +506,7 @@ export class PostgresScanLedger {
         consecutive_complete_empty_scans = CASE
           WHEN ${complete} AND ${input.observations.length === 0} THEN consecutive_complete_empty_scans + 1
           WHEN ${complete} THEN 0 ELSE consecutive_complete_empty_scans END,
-        last_board_hash = ${input.boardHash ?? null}
+        last_board_hash = ${input.boardHash ?? null}, inventory_state = ${inventoryState}
       WHERE id = ${input.sourceId}`;
       await tx`UPDATE work_jobs SET status = 'succeeded', completed_at = ${input.endedAt},
         leased_at = NULL, lease_expires_at = NULL, lease_owner = NULL, lease_token = NULL
@@ -405,27 +533,38 @@ export class PostgresScanLedger {
         if (existing.delivery_hash !== inputHash) throw new ScanLedgerError("scan_replay_mismatch");
         return { scanId: existing.id, observationCount: 0, versionCount: 0, replayed: true };
       }
-      const job = (await tx<{ attempt: number; max_attempts: number }[]>`SELECT attempt, max_attempts FROM work_jobs
+      const job = (await tx<{ attempt: number; max_attempts: number; payload_json: Record<string, unknown> }[]>`
+        SELECT attempt, max_attempts, payload_json FROM work_jobs
         WHERE id = ${input.lease.id} AND status = 'leased' AND lease_owner = ${input.workerId}
           AND lease_token = ${input.lease.leaseToken} AND lease_generation = ${input.lease.leaseGeneration}
           AND lease_expires_at > clock_timestamp() FOR UPDATE`)[0];
       if (!job) throw new ScanLedgerError("stale_lease");
-      const source = (await tx<{ connector_id: string; connector_version: string; policy_id: string }[]>`
-        SELECT connector_id, connector_version, policy_id FROM sources WHERE id = ${input.sourceId} FOR UPDATE`)[0];
+      const source = (await tx<{ connector_id: string; connector_version: string; tenant_key: string;
+        board_url: string; api_base_url: string; region: string; policy_id: string;
+        policy_row_version: number }[]>`
+        SELECT source.connector_id, source.connector_version, source.tenant_key, source.board_url,
+          source.api_base_url, source.region, source.policy_id, policy.row_version AS policy_row_version
+        FROM sources source JOIN source_policies policy ON policy.id = source.policy_id
+        WHERE source.id = ${input.sourceId} FOR UPDATE OF source`)[0];
       if (!source) throw new ScanLedgerError("source_not_found");
       if (source.connector_id !== input.connectorId || source.connector_version !== input.connectorVersion || source.policy_id !== input.policyId) {
+        throw new ScanLedgerError("source_snapshot_mismatch");
+      }
+      if (typeof job.payload_json?.tenantKey === "string" && job.payload_json.tenantKey !== source.tenant_key) {
         throw new ScanLedgerError("source_snapshot_mismatch");
       }
       const scanId = Bun.randomUUIDv7();
       await tx`INSERT INTO source_scans (
         id, source_id, work_job_id, lease_generation, started_at, ended_at, http_outcome,
         response_count, byte_count, duration_ms, connector_id, connector_version,
-        safe_fetch_policy_version, policy_id, delivery_hash, fetch_metadata, completeness_state,
+        safe_fetch_policy_version, policy_id, policy_row_version, source_identity_hash,
+        delivery_hash, fetch_metadata, completeness_state,
         completeness_reason, observed_job_count, error_code, error_message
       ) VALUES (
         ${scanId}, ${input.sourceId}, ${input.lease.id}, ${input.lease.leaseGeneration}, ${input.startedAt}, ${input.endedAt},
         ${"failed"}, ${artifacts.length}, ${byteCount}, ${input.endedAt.getTime() - input.startedAt.getTime()},
-        ${input.connectorId}, ${input.connectorVersion}, ${input.safeFetchPolicyVersion}, ${input.policyId}, ${inputHash},
+        ${input.connectorId}, ${input.connectorVersion}, ${input.safeFetchPolicyVersion}, ${input.policyId},
+        ${source.policy_row_version}, ${sourceIdentityHash(source)}, ${inputHash},
         ${boundedObject(input.fetchMetadata, "fetch_metadata")}::text::jsonb, ${"failed"}, ${input.reason}, ${0},
         ${input.errorCode}, ${redactedMessage}
       )`;
@@ -433,6 +572,9 @@ export class PostgresScanLedger {
         await tx`INSERT INTO source_scan_artifacts (source_scan_id, artifact_id, response_order)
           VALUES (${scanId}, ${artifactId}, ${order})`;
       }
+      await tx`UPDATE source_empty_reviews SET state = 'superseded', decided_by = 'system',
+        decision_reason = 'failed_scan_disqualified_empty_review', decided_at = clock_timestamp()
+        WHERE source_id = ${input.sourceId} AND state = 'pending'`;
       const canRetry = input.retryable && job.attempt < job.max_attempts;
       const status = canRetry ? "retryable_failed" : "terminal_failed";
       const capMs = Math.min(3_600_000, 5_000 * 2 ** Math.max(0, job.attempt - 1));
@@ -442,6 +584,7 @@ export class PostgresScanLedger {
         last_error_message = ${redactedMessage}, leased_at = NULL, lease_expires_at = NULL,
         lease_owner = NULL, lease_token = NULL WHERE id = ${input.lease.id}`;
       await tx`UPDATE sources SET health_state = ${input.reason === "blocked" ? "blocked" : "degraded"},
+        inventory_state = CASE WHEN inventory_state = 'confirmed_empty' THEN 'suspected_empty' ELSE inventory_state END,
         last_attempt_at = ${input.endedAt}, consecutive_failures = consecutive_failures + 1 WHERE id = ${input.sourceId}`;
       return { scanId, observationCount: 0, versionCount: 0, replayed: false };
     });

@@ -1,6 +1,9 @@
 import { guardRequest } from "@career-os/auth";
 import {
   ClearCircuitBreakerSchema,
+  ConfirmEmptyBoardSchema,
+  RejectEmptyBoardSchema,
+  CloseEmptyBoardSchema,
   CompanyReviewDecisionSchema,
   CompanySplitDecisionSchema,
   OpportunityReviewDecisionSchema,
@@ -9,6 +12,7 @@ import {
 } from "@career-os/contracts";
 import {
   CompanyResolutionError,
+  EmptyBoardError,
   LifecycleStoreError,
   OpportunityResolutionError,
   type OperatorConsoleService,
@@ -41,6 +45,9 @@ async function body<T>(request: Request, schema: Schema<T>): Promise<T> {
 export async function handleOperatorRoute(request: Request, config: RuntimeConfig, options: OperatorRouteOptions): Promise<Response | undefined> {
   const { pathname, searchParams } = new URL(request.url);
   const isPath = pathname === "/api/v1/admin/overview" || pathname === "/api/v1/admin/reviews"
+    || pathname === "/api/v1/admin/empty-boards/reviews"
+    || new RegExp(`^/api/v1/admin/empty-boards/reviews/${UUID}/(confirm|reject)$`).test(pathname)
+    || new RegExp(`^/api/v1/admin/empty-boards/sources/${UUID}/close$`).test(pathname)
     || new RegExp(`^/api/v1/admin/reviews/${UUID}$`).test(pathname)
     || new RegExp(`^/api/v1/admin/sources/${UUID}/evidence$`).test(pathname)
     || new RegExp(`^/api/v1/admin/circuit-breakers/${UUID}/clear$`).test(pathname)
@@ -54,6 +61,9 @@ export async function handleOperatorRoute(request: Request, config: RuntimeConfi
   if (!options.service) return reply({ error: "operator_console_unavailable" }, 503, headers);
   try {
     if (request.method === "GET" && pathname === "/api/v1/admin/overview") return reply(await options.service.overview(), 200, headers);
+    if (request.method === "GET" && pathname === "/api/v1/admin/empty-boards/reviews") {
+      return reply(await options.service.emptyBoardReviews(), 200, headers);
+    }
     if (request.method === "GET" && pathname === "/api/v1/admin/reviews") {
       const state = searchParams.get("state") ?? "pending";
       if (state !== "pending" && state !== "approved" && state !== "rejected") throw new Error("invalid_query");
@@ -70,6 +80,16 @@ export async function handleOperatorRoute(request: Request, config: RuntimeConfi
       return result ? reply(result, 200, headers) : reply({ error: "source_not_found" }, 404, headers);
     }
     const context = { actorId: principal.id, idempotencyKey: key(request) };
+    const emptyReview = new RegExp(`^/api/v1/admin/empty-boards/reviews/(${UUID})/(confirm|reject)$`).exec(pathname);
+    if (request.method === "POST" && emptyReview) {
+      if (emptyReview[2] === "confirm") return reply(await options.service.confirmEmptyBoard(context,
+        emptyReview[1]!, await body(request, ConfirmEmptyBoardSchema)), 200, headers);
+      const input = await body(request, RejectEmptyBoardSchema);
+      return reply(await options.service.rejectEmptyBoard(context, emptyReview[1]!, input.reason), 200, headers);
+    }
+    const emptyClose = new RegExp(`^/api/v1/admin/empty-boards/sources/(${UUID})/close$`).exec(pathname);
+    if (request.method === "POST" && emptyClose) return reply(await options.service.closeEmptyBoard(context,
+      emptyClose[1]!, await body(request, CloseEmptyBoardSchema)), 200, headers);
     const breaker = new RegExp(`^/api/v1/admin/circuit-breakers/(${UUID})/clear$`).exec(pathname);
     if (request.method === "POST" && breaker) {
       const input = await body(request, ClearCircuitBreakerSchema);
@@ -95,7 +115,8 @@ export async function handleOperatorRoute(request: Request, config: RuntimeConfi
   } catch (error) {
     const code = error instanceof Error ? error.message : "internal_error";
     if (["idempotency_key_required", "request_body_too_large", "invalid_json", "invalid_request", "invalid_query"].includes(code)) return reply({ error: code }, 400, headers);
-    if (error instanceof CompanyResolutionError || error instanceof OpportunityResolutionError || error instanceof LifecycleStoreError) {
+    if (error instanceof CompanyResolutionError || error instanceof OpportunityResolutionError
+      || error instanceof LifecycleStoreError || error instanceof EmptyBoardError) {
       const status = /not_found/u.test(error.code) ? 404 : /idempotency/u.test(error.code) ? 409 : 422;
       return reply({ error: error.code }, status, headers);
     }

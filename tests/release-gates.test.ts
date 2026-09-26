@@ -12,7 +12,7 @@ const startedAt = Date.parse("2026-09-04T00:00:00.000Z");
 
 function bundle(): Record<string, unknown> {
   const snapshots = Array.from({ length: 15 }, (_, index) => ({
-    schemaVersion: 1,
+    schemaVersion: 2,
     capturedAt: new Date(startedAt + index * 12 * 3_600_000).toISOString(),
     soakStartedAt: new Date(startedAt).toISOString(),
     releaseCommit,
@@ -22,6 +22,9 @@ function bundle(): Record<string, unknown> {
     freshness: { enabledSources: 1_000, healthySources: 1_000, twiceEnumerated24h: index < 2 ? 0 : 970 },
     publication: { sampleSize: 8_000, medianHours: 4, p95Hours: 12 },
     lifecycle: { closures: 500, massFalseClosures: 0 },
+    inventory: { confirmedEmptySources: 20, healthyEmptySources: 20,
+      healthyEmptyUnresolved: 0, healthyEmptyWithoutCurrentConfirmation: 0, pendingEmptyReviews: 0,
+      heldListings: 42, heldListingsInActiveSearch: 0 },
     identity: { sourceListings: 50_000, duplicateSourceListings: 0 },
     provenance: { displayedFacts: 200_000, factsWithEvidence: 200_000 },
   }));
@@ -57,7 +60,7 @@ describe("release evidence gates", () => {
   test("passes one internally consistent seven-day evidence bundle at every exact threshold", () => {
     const result = evaluateReleaseEvidence(bundle());
     expect(result.ready).toBe(true);
-    expect(result.gates.length).toBe(21);
+    expect(result.gates.length).toBe(22);
     expect(result.gates.every((gate) => gate.passed)).toBe(true);
   });
 
@@ -82,6 +85,14 @@ describe("release evidence gates", () => {
     evidence.snapshots[4].registryDigest = "c".repeat(64);
     const result = evaluateReleaseEvidence(evidence);
     expect(result.gates.find((gate) => gate.id === "evidence-subject")?.passed).toBe(false);
+  });
+
+  test("fails closed when a healthy historical empty board loses confirmation or a held-only result is active", () => {
+    const evidence = bundle() as any;
+    evidence.snapshots.at(-1).inventory.healthyEmptyWithoutCurrentConfirmation = 1;
+    evidence.snapshots.at(-1).inventory.heldListingsInActiveSearch = 1;
+    const result = evaluateReleaseEvidence(evidence);
+    expect(result.gates.find((gate) => gate.id === "verified-empty-inventory")?.passed).toBe(false);
   });
 
   test("accepts only aggregate, isolated restore evidence", () => {

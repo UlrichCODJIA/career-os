@@ -130,6 +130,10 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
+export function pilotRegistryDigest(manifest: PilotRegistryManifest): string {
+  return createHash("sha256").update(canonical(manifest)).digest("hex");
+}
+
 function exactUrl(value: string, host: string, path: string): boolean {
   const url = new URL(value);
   return url.hostname === host && url.pathname.replace(/\/$/, "") === path && !url.search && !url.hash;
@@ -259,7 +263,7 @@ export function validatePilotRegistryManifest(
     quarantineLocators.add(locator);
   }
 
-  const digest = createHash("sha256").update(canonical(manifest)).digest("hex");
+  const digest = pilotRegistryDigest(manifest);
   return {
     manifest,
     report: {

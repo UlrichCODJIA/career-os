@@ -85,6 +85,40 @@ try {
         AND occurred_at >= ${soakStartedAt} AND occurred_at <= ${capturedAt}) AS mass_false
     FROM lifecycle_events WHERE occurred_at >= ${soakStartedAt} AND occurred_at <= ${capturedAt}
   `;
+  const [inventory] = await database<{ confirmed: number; healthy_empty: number; unresolved: number; unconfirmed: number;
+    pending: number; held: number; held_visible: number }[]>`
+    SELECT
+      (SELECT count(*)::int FROM sources WHERE inventory_state = 'confirmed_empty') AS confirmed,
+      (SELECT count(*)::int FROM sources WHERE enabled AND health_state = 'healthy'
+        AND inventory_state = 'confirmed_empty') AS healthy_empty,
+      (SELECT count(*)::int FROM sources WHERE enabled AND health_state = 'healthy'
+        AND last_job_count = 0 AND inventory_state <> 'confirmed_empty') AS unresolved,
+      (SELECT count(*)::int FROM sources source JOIN source_policies policy ON policy.id = source.policy_id
+        WHERE source.enabled AND source.health_state = 'healthy'
+        AND source.last_job_count = 0
+        AND EXISTS (SELECT 1 FROM source_listings listing WHERE listing.source_id = source.id)
+        AND (source.inventory_state <> 'confirmed_empty' OR policy.state <> 'approved' OR policy.expires_at <= ${capturedAt}
+          OR source.policy_review_due_at <= ${capturedAt} OR NOT EXISTS (SELECT 1 FROM source_empty_confirmations confirmation
+          WHERE confirmation.source_id = source.id AND confirmation.connector_id = source.connector_id
+            AND confirmation.connector_version = source.connector_version AND confirmation.tenant_key = source.tenant_key
+            AND confirmation.board_url = source.board_url AND confirmation.api_base_url = source.api_base_url
+            AND confirmation.region = source.region AND confirmation.policy_id = source.policy_id
+            AND confirmation.policy_row_version = policy.row_version
+            AND confirmation.board_hash = source.last_board_hash
+            AND confirmation.valid_until > ${capturedAt}
+            AND NOT EXISTS (SELECT 1 FROM source_empty_confirmation_events event
+              WHERE event.confirmation_id = confirmation.id AND event.event_type = 'invalidated')))) AS unconfirmed,
+      (SELECT count(*)::int FROM source_empty_reviews WHERE state = 'pending') AS pending,
+      (SELECT count(*)::int FROM source_listings WHERE closure_hold_confirmation_id IS NOT NULL) AS held,
+      (SELECT count(DISTINCT listing.id)::int FROM source_listings listing
+        JOIN opportunity_members member ON member.source_listing_id = listing.id AND member.state <> 'human_rejected'
+        JOIN opportunities opportunity ON opportunity.id = member.opportunity_id AND opportunity.status = 'active'
+        WHERE listing.closure_hold_confirmation_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM opportunity_members other_member
+            JOIN source_listings other_listing ON other_listing.id = other_member.source_listing_id
+            WHERE other_member.opportunity_id = opportunity.id AND other_member.state <> 'human_rejected'
+              AND other_listing.lifecycle_state = 'active')) AS held_visible
+  `;
   const [identity] = await database<Record<string, unknown>[]>`
     SELECT
       (SELECT count(*)::int FROM source_listings) AS listings,
@@ -99,7 +133,7 @@ try {
   `;
 
   const snapshot = SoakSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     capturedAt: capturedAt.toISOString(),
     soakStartedAt: soakStartedAt.toISOString(),
     releaseCommit,
@@ -117,6 +151,10 @@ try {
       p95Hours: publication?.p95 === null ? null : metric(publication?.p95),
     },
     lifecycle: { closures: count(lifecycle?.closures), massFalseClosures: count(lifecycle?.mass_false) },
+    inventory: { confirmedEmptySources: count(inventory?.confirmed), healthyEmptySources: count(inventory?.healthy_empty),
+      healthyEmptyUnresolved: count(inventory?.unresolved),
+      healthyEmptyWithoutCurrentConfirmation: count(inventory?.unconfirmed), pendingEmptyReviews: count(inventory?.pending),
+      heldListings: count(inventory?.held), heldListingsInActiveSearch: count(inventory?.held_visible) },
     identity: {
       sourceListings: count(identity?.listings), duplicateSourceListings: count(identity?.duplicates),
     },

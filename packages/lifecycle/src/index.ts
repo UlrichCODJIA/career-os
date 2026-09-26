@@ -1,6 +1,7 @@
 export const LIFECYCLE_VERSION = "1.0.0";
 export const CLOSURE_CONFIRMATION_MS = 30 * 60 * 1_000;
 export const EMPTY_SOURCE_CONFIRMATION_MAX_MS = 24 * 60 * 60 * 1_000;
+export const EMPTY_REVIEW_VALID_MS = 14 * 24 * 60 * 60 * 1_000;
 
 export type ListingState = "active" | "possibly_closed" | "closed";
 export interface ListingLifecycleInput {
@@ -75,5 +76,24 @@ export function confirmsNeverPopulatedEmptySource(input: EmptySourceConfirmation
     || !input.boardHash || !input.previousBoardHash || input.boardHash !== input.previousBoardHash
     || !input.previousEmptyAt) return false;
   const elapsed = instant(input.observedAt) - instant(input.previousEmptyAt);
+  return elapsed >= CLOSURE_CONFIRMATION_MS && elapsed <= EMPTY_SOURCE_CONFIRMATION_MAX_MS;
+}
+
+export interface HistoricalEmptyPairInput {
+  firstReason: string;
+  secondReason: string;
+  firstJobCount: number;
+  secondJobCount: number;
+  firstBoardHash?: string | null;
+  secondBoardHash?: string | null;
+  firstEndedAt: string;
+  secondEndedAt: string;
+}
+
+export function qualifiesHistoricalEmptyPair(input: HistoricalEmptyPairInput): boolean {
+  if (input.firstReason !== "suspicious_empty" || input.secondReason !== "suspicious_empty"
+    || input.firstJobCount !== 0 || input.secondJobCount !== 0
+    || !input.firstBoardHash || !input.secondBoardHash || input.firstBoardHash !== input.secondBoardHash) return false;
+  const elapsed = instant(input.secondEndedAt) - instant(input.firstEndedAt);
   return elapsed >= CLOSURE_CONFIRMATION_MS && elapsed <= EMPTY_SOURCE_CONFIRMATION_MAX_MS;
 }

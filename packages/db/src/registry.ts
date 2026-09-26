@@ -324,8 +324,8 @@ export class PostgresRegistryStore implements RegistryStore {
 
   async listSources(enabled?: boolean): Promise<JsonObject> {
     const rows = enabled === undefined
-      ? await this.sql<JsonObject[]>`SELECT * FROM sources ORDER BY created_at, id LIMIT 500`
-      : await this.sql<JsonObject[]>`SELECT * FROM sources WHERE enabled = ${enabled} ORDER BY created_at, id LIMIT 500`;
+      ? await this.sql<JsonObject[]>`SELECT * FROM sources ORDER BY created_at, id LIMIT 2000`
+      : await this.sql<JsonObject[]>`SELECT * FROM sources WHERE enabled = ${enabled} ORDER BY created_at, id LIMIT 2000`;
     return { sources: rows };
   }
 }

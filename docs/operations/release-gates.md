@@ -1,6 +1,6 @@
 # Release evidence and pilot soak
 
-ARM-28 / DSV-024 is fail-closed. A release is not ready because CI is green or a canary succeeded; all twenty-one gates in `@career-os/release-gates` must pass against one exact release commit and pilot-registry digest.
+ARM-28 / DSV-024 is fail-closed. A release is not ready because CI is green or a canary succeeded; all twenty-two gates in `@career-os/release-gates` must pass against one exact release commit and pilot-registry digest.
 
 ## Evidence set
 
@@ -26,12 +26,15 @@ The capture query defines metrics consistently:
 - schedule success counts only `scan_source` jobs whose durable scan is complete; connector-declared incomplete outcomes count against the rate even when their queue delivery terminated normally;
 - queue lag measures scheduled-to-first-attempt time, or current wait for not-yet-started jobs;
 - fleet health requires every enabled source to be healthy, and twice-enumerated freshness uses the full enabled-source population as its denominator;
+- inventory evidence separates confirmed-empty sources from health, counts pending historical-empty reviews and held listings, and fails if a historically populated healthy-empty source lacks a current identity-bound confirmation or a held-only opportunity appears in default active search;
 - publication lag uses nonnegative listing-version creation minus source-posted timestamps;
 - closures come from immutable lifecycle events, while confirmed mass false-closure incidents come from explicit release audit events;
 - the fault drill replays an identical delivery through the durable scan ledger and proves it returns one immutable scan; duplicate checks use `(source_id, source_job_id)`;
 - provenance counts selected assertions and their retained evidence locator or deterministic/human origin.
 
-Start the soak only after the recovery backlog is empty, all 1,000 sources are healthy, the release commit is frozen, and the exact registry digest is recorded. Capture at least twice per day for seven full days. The evaluator requires at least 14 snapshots, at least 168 hours of coverage, no gap above 14 hours, and mature freshness/queue observations after the first 24 hours.
+Before setting `SOAK_STARTED_AT`, run `bun run release:check-soak-start` with `DATABASE_URL`, `RELEASE_COMMIT`, `REGISTRY_DIGEST`, and optionally `REGISTRY_MANIFEST_PATH`. It fails closed unless the deployed checkout matches the commit, the approved manifest parses and hashes to the digest, all 1,000 enabled source identities match the archive, all sources are healthy, overdue and recent terminal scan work is cleared, no empty-board review or breaker is pending, no held-only opportunity remains in active search, and every policy and historical-empty confirmation remains valid for at least eight days. This check does not start the timer. Preserve older snapshots as their original evidence; new snapshots use schema version 2 and must not be mixed into a new release subject by relabelling.
+
+After the start gate passes, set a fresh `SOAK_STARTED_AT`, capture at least twice per day for seven full days, and retain the exact release commit and registry digest. The evaluator requires at least 14 snapshots, at least 168 hours of coverage, no gap above 14 hours, and mature freshness/queue observations after the first 24 hours. See [verified-empty board operations](verified-empty-boards.md) for the human review and deployment sequence.
 
 ## Thresholds
 

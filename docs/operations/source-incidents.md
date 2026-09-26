@@ -18,6 +18,8 @@ A baseline of at least ten listings falling to 20% or less is critical.
 4. Reproduce with the connector's frozen fixture harness. Add a sanitized fixture for a legitimate schema change, update the connector, and pass the full suite.
 5. Clear the breaker with an explicit reason only after a new complete scan matches the expected count envelope.
 
+For a zero-listed-job response from a previously populated ATS board, follow [verified-empty board operations](verified-empty-boards.md). An empty response does not itself close historical jobs; review the exact employer-to-ATS link before treating the inventory as confirmed empty.
+
 ## Closure spike
 
 Ten or more closures affecting at least 35% of observed listings is critical.

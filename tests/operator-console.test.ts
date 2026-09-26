@@ -18,6 +18,16 @@ class FakeOperatorConsole implements OperatorConsoleService {
   reviews(): Promise<Record<string, unknown>> { return Promise.resolve({ reviews: [] }); }
   review(): Promise<Record<string, unknown>> { return Promise.resolve({ id: reviewId, candidate: { candidateOpportunityIds: [sourceId] } }); }
   sourceEvidence(): Promise<Record<string, unknown>> { return Promise.resolve({ source: { id: sourceId }, scans: [], rawArtifactAccess: { available: false } }); }
+  emptyBoardReviews(): Promise<Record<string, unknown>> { return Promise.resolve({ reviews: [] }); }
+  confirmEmptyBoard(context: OperatorContext, reviewId: string, input: unknown): Promise<Record<string, unknown>> {
+    this.calls.push({ name: "confirm-empty", context, value: { reviewId, input } }); return Promise.resolve({ confirmationId: sourceId });
+  }
+  rejectEmptyBoard(context: OperatorContext, reviewId: string, reason: string): Promise<Record<string, unknown>> {
+    this.calls.push({ name: "reject-empty", context, value: { reviewId, reason } }); return Promise.resolve({ state: "rejected" });
+  }
+  closeEmptyBoard(context: OperatorContext, sourceIdValue: string, input: unknown): Promise<Record<string, unknown>> {
+    this.calls.push({ name: "close-empty", context, value: { sourceIdValue, input } }); return Promise.resolve({ closedListings: 1 });
+  }
   clearBreaker(context: OperatorContext, breakerId: string, reason: string): Promise<unknown> { this.calls.push({ name: "clear", context, value: { breakerId, reason } }); return Promise.resolve({ breakerId }); }
   mergeCompanyReview(): Promise<unknown> { return Promise.resolve({}); }
   splitCompany(): Promise<unknown> { return Promise.resolve({}); }
@@ -76,5 +86,22 @@ describe("operator console API", () => {
     expect(rejected.status).toBe(403);
     const accepted = await fetch(endpoint, { method: "POST", headers: { ...headers, "x-csrf-token": generateCsrfToken(operatorToken, csrfSecret) }, body: JSON.stringify({ reason: "Reviewed anomaly evidence" }) });
     expect(accepted.status).toBe(200);
+  });
+
+  test("requires operator authorization and bounded evidence for empty-board decisions", async () => {
+    const service = new FakeOperatorConsole();
+    const server = createApiServer(config("bearer"), { operatorConsole: service }); servers.push(server);
+    const endpoint = `http://127.0.0.1:${server.port}/api/v1/admin/empty-boards/reviews/${reviewId}/confirm`;
+    const input = { firstScanId: sourceId, secondScanId: reviewId, ownershipEvidenceId: sourceId,
+      employerCareersUrl: "https://employer.example/careers", attestsExactBoardLink: true,
+      reason: "Verified employer page links to this exact ATS board" };
+    expect((await fetch(endpoint, { method: "POST", headers: { ...baseHeaders(userToken), "idempotency-key": "empty-review-0001" },
+      body: JSON.stringify(input) })).status).toBe(403);
+    expect((await fetch(endpoint, { method: "POST", headers: { ...baseHeaders(), "idempotency-key": "empty-review-0001" },
+      body: JSON.stringify({ ...input, attestsExactBoardLink: false }) })).status).toBe(400);
+    expect((await fetch(endpoint, { method: "POST", headers: { ...baseHeaders(), "idempotency-key": "empty-review-0001" },
+      body: JSON.stringify(input) })).status).toBe(200);
+    expect(service.calls).toHaveLength(1);
+    expect(service.calls[0]).toMatchObject({ name: "confirm-empty", context: { actorId: "configured-operator" } });
   });
 });

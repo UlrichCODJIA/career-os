@@ -380,6 +380,15 @@ const OperatorReasonSchema = z.string().trim().min(8).max(1_000);
 const ResolverVersionSchema = z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9._:-]+$/);
 
 export const ClearCircuitBreakerSchema = z.object({ reason: OperatorReasonSchema }).strict();
+export const ConfirmEmptyBoardSchema = z.object({
+  firstScanId: z.uuid(), secondScanId: z.uuid(), ownershipEvidenceId: z.uuid(),
+  employerCareersUrl: z.url().startsWith("https://").max(2_000),
+  attestsExactBoardLink: z.literal(true), reason: OperatorReasonSchema,
+}).strict();
+export const RejectEmptyBoardSchema = z.object({ reason: OperatorReasonSchema }).strict();
+export const CloseEmptyBoardSchema = z.object({
+  confirmationId: z.uuid(), expectedListingCount: z.number().int().positive(), reason: OperatorReasonSchema,
+}).strict();
 export const CompanyReviewDecisionSchema = z.object({
   sourceCompanyId: z.uuid(), canonicalCompanyId: z.uuid(), resolverVersion: ResolverVersionSchema,
   confidence: z.number().min(0.9).max(1), reason: OperatorReasonSchema,

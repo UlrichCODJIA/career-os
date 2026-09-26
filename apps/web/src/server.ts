@@ -1,6 +1,7 @@
 import { createHealthResponse, isLoopbackHost, type RuntimeConfig } from "@career-os/contracts";
 import { shellHtml, shellScript, shellStyles } from "./shell.ts";
 import { operatorHtml, operatorOverrides, operatorScript, operatorStyles } from "./operator-shell.ts";
+import { emptyBoardScript } from "./empty-board-console.ts";
 import { operatorSummaryScript } from "./operator-summary.ts";
 
 export interface WebApiProxyConfig {
@@ -147,6 +148,7 @@ export function createWebServer(
       if (request.method === "GET" && url.pathname === "/operator.css") return new Response(operatorStyles + operatorOverrides, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
       if (request.method === "GET" && url.pathname === "/operator.js") return new Response(operatorScript(clientApiBaseUrl), { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
       if (request.method === "GET" && url.pathname === "/operator-summary.js") return new Response(operatorSummaryScript(clientApiBaseUrl), { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+      if (request.method === "GET" && url.pathname === "/empty-board.js") return new Response(emptyBoardScript(clientApiBaseUrl), { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
       return new Response("Not found", { status: 404 });
     },
   });

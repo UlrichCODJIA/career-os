@@ -7,7 +7,7 @@ const Count = z.number().int().nonnegative();
 const Hours = z.number().finite().nonnegative();
 
 export const SoakSnapshotSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   capturedAt: Timestamp,
   soakStartedAt: Timestamp,
   releaseCommit: Commit,
@@ -22,6 +22,9 @@ export const SoakSnapshotSchema = z.object({
       "freshness counts must reconcile"),
   publication: z.object({ sampleSize: Count, medianHours: Hours.nullable(), p95Hours: Hours.nullable() }).strict(),
   lifecycle: z.object({ closures: Count, massFalseClosures: Count }).strict(),
+  inventory: z.object({ confirmedEmptySources: Count, healthyEmptySources: Count,
+    healthyEmptyUnresolved: Count, healthyEmptyWithoutCurrentConfirmation: Count, pendingEmptyReviews: Count,
+    heldListings: Count, heldListingsInActiveSearch: Count }).strict(),
   identity: z.object({
     sourceListings: Count, duplicateSourceListings: Count,
   }).strict(),
@@ -170,6 +173,13 @@ export function evaluateReleaseEvidence(input: unknown): { ready: boolean; gates
   gate("schedule-success", completedJobs > 0 && successRate >= 0.99, `${(successRate * 100).toFixed(3)}%`, ">=99%");
   gate("fleet-health", final.freshness.healthySources === final.freshness.enabledSources,
     `${final.freshness.healthySources}/${final.freshness.enabledSources}`, "all enabled sources healthy");
+  gate("verified-empty-inventory", final.inventory.healthyEmptyUnresolved === 0
+      && final.inventory.healthyEmptyWithoutCurrentConfirmation === 0
+      && final.inventory.pendingEmptyReviews === 0 && final.inventory.heldListingsInActiveSearch === 0,
+    `${final.inventory.healthyEmptySources} healthy-empty; ${final.inventory.healthyEmptyUnresolved} unresolved; `
+      + `${final.inventory.healthyEmptyWithoutCurrentConfirmation} unconfirmed; `
+      + `${final.inventory.pendingEmptyReviews} pending reviews; ${final.inventory.heldListingsInActiveSearch} held in active search`,
+    "every historically populated healthy-empty board has a current confirmation; no pending review or held-only active result");
   const freshnessRates = mature.map((snapshot) => ratio(snapshot.freshness.twiceEnumerated24h, snapshot.freshness.enabledSources));
   gate("freshness", mature.length > 0 && Math.min(...freshnessRates) >= 0.95,
     mature.length ? `${(Math.min(...freshnessRates) * 100).toFixed(3)}% minimum` : "no mature snapshots", ">=95% at every mature snapshot");
