@@ -17,6 +17,7 @@ import {
   AshbyConnectorError,
   ashbyConnector,
   createAshbyConnector,
+  diagnoseAshbyArtifact,
   validateAshbySource,
 } from "../packages/connectors/src/index.ts";
 import { SafeFetchClient, type SafeFetchDecision, type SafeFetchPolicy, type SafeFetchTransport, type TransportRequest, type TransportResponse } from "../packages/safe-fetch/src/index.ts";
@@ -74,6 +75,31 @@ describe("Ashby detection, source identity, and plans", () => {
     ]) expect(ashbyConnector.detect(new URL(url))).toMatchObject({ detected: false });
   });
 
+  test("accepts domain-shaped board identifiers without weakening path identity", () => {
+    const domainSource: SourceDescriptor = {
+      ...source,
+      tenantKey: "cytora.com",
+      boardUrl: "https://jobs.ashbyhq.com/cytora.com",
+      apiBaseUrl: "https://api.ashbyhq.com/posting-api/job-board/cytora.com",
+    };
+    expect(ashbyConnector.detect(new URL(domainSource.boardUrl))).toMatchObject({
+      detected: true,
+      tenantKey: "cytora.com",
+      confidence: 1,
+    });
+    expect(validateAshbySource(domainSource)).toEqual(domainSource);
+    expect(ashbyConnector.planEnumeration(domainSource)).toEqual({ requests: [{
+      url: "https://api.ashbyhq.com/posting-api/job-board/cytora.com?includeCompensation=true",
+      method: "GET",
+      accept: "application/json",
+    }] });
+    for (const url of [
+      "https://jobs.ashbyhq.com/cytora.com/extra",
+      "https://jobs.ashbyhq.com/cytora.com%2fescape",
+      "https://api.ashbyhq.com/posting-api/job-board/cytora.com/extra",
+    ]) expect(ashbyConnector.detect(new URL(url))).toMatchObject({ detected: false });
+  });
+
   test("binds a global tenant and emits one exact compensated board request", () => {
     expect(validateAshbySource(source).tenantKey).toBe("acme");
     expect(validateAshbySource({ ...source, boardUrl: "https://careers.acme.example/jobs" }).tenantKey).toBe("acme");
@@ -84,7 +110,7 @@ describe("Ashby detection, source identity, and plans", () => {
     expect(() => validateAshbySource({ ...source, apiBaseUrl: "https://api.ashbyhq.com/posting-api/job-board/other" })).toThrow(AshbyConnectorError);
     expect(ashbyConnector.planEnumeration(source)).toEqual({ requests: [{ url: endpoint, method: "GET", accept: "application/json" }] });
     expect(() => ashbyConnector.planEnumeration(source, "next")).toThrow("ashby_cursor_unsupported");
-    expect(ashbyConnector.planDetails(source, { sourceJobId: postingId } as EnumeratedListing)).toEqual({ requests: [{ url: endpoint, method: "GET", accept: "application/json" }] });
+    expect(ashbyConnector.planDetails(source, { sourceJobId: postingId } as EnumeratedListing)).toBeNull();
   });
 });
 
@@ -103,6 +129,18 @@ describe("Ashby frozen contract and fail-closed completeness", () => {
 
   test("filters unlisted jobs but rejects duplicates, cross-tenant records, and endpoint drift", async () => {
     const payload = JSON.parse(await readFile(join(fixtureRoot, "list-valid-hostile.json"), "utf8")) as { jobs: Array<Record<string, unknown>> };
+    const nullableSecondaryAddress = {
+      ...payload.jobs[0]!,
+      isRemote: null,
+      workplaceType: null,
+      address: null,
+      secondaryLocations: [{ location: "Remote", address: null }],
+    };
+    expect(await ashbyConnector.parseEnumeration([
+      memoryArtifact({ apiVersion: "1", jobs: [nullableSecondaryAddress] }, "ashby-null-secondary-address"),
+    ])).toMatchObject({ complete: true, completenessReason: "complete" });
+    expect(diagnoseAshbyArtifact(memoryArtifact({ apiVersion: "1", jobs: [nullableSecondaryAddress] }, "ashby-diagnostic")))
+      .toMatchObject({ schemaValid: true, jobCount: 1, listedCount: 1, invalidIdentityCount: 0, duplicateIdentityCount: 0, schemaIssues: [] });
     const unlisted = { ...payload.jobs[0]!, id: "22222222-2222-4333-8444-555555555555", isListed: false, jobUrl: "https://jobs.ashbyhq.com/acme/22222222-2222-4333-8444-555555555555", applyUrl: "https://jobs.ashbyhq.com/acme/22222222-2222-4333-8444-555555555555/application" };
     const filtered = await ashbyConnector.parseEnumeration([memoryArtifact({ apiVersion: "1", jobs: [payload.jobs[0], unlisted] }, "ashby-filtered")]);
     expect(filtered).toMatchObject({ complete: true, completenessReason: "complete" });
@@ -112,6 +150,8 @@ describe("Ashby frozen contract and fail-closed completeness", () => {
     const crossTenant = { ...payload.jobs[0]!, jobUrl: `https://jobs.ashbyhq.com/other/${postingId}`, applyUrl: `https://jobs.ashbyhq.com/other/${postingId}/application` };
     const poisoned = await ashbyConnector.parseEnumeration([memoryArtifact({ apiVersion: "1", jobs: [crossTenant] }, "ashby-cross-tenant")]);
     expect(poisoned).toMatchObject({ listings: [], complete: false, completenessReason: "schema_invalid" });
+    expect(diagnoseAshbyArtifact(memoryArtifact({ apiVersion: "1", jobs: [crossTenant] }, "ashby-cross-tenant-diagnostic")))
+      .toMatchObject({ schemaValid: true, invalidIdentityCount: 1 });
     const valid = await artifact("list-valid-hostile.json", "ashby-valid");
     expect(() => ashbyConnector.parseEnumeration([{ ...valid, sourceUrl: `${endpoint}&extra=true` }])).toThrow("ashby_source_invalid");
     expect(() => ashbyConnector.parseEnumeration([valid, valid])).toThrow("ashby_artifact_count");

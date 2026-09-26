@@ -12,6 +12,10 @@ Career OS recovery requires both PostgreSQL and the content-addressed artifact v
 
 ## Restore drill
 
+For the local release candidate, run `bun run release:verify-restore`. The verifier stops the idle worker at a recorded consistency boundary, creates a PostgreSQL custom-format backup, and archives the content-addressed artifact volume. It restores both into generated, isolated targets with outbound networking disabled, compares exact per-table row counts, migration checksums, artifact counts, byte totals, and a path-and-content tree digest, then removes the temporary database, volume, and backup. The worker is restarted in `finally`, including after a failed drill. A successful run writes the private, aggregate-only `private/release/restore-drill-receipt.json`; rerun it after the release commit is frozen so the receipt names the exact candidate.
+
+The verifier refuses to snapshot while any queue job is active. It never logs database rows, artifact contents, credentials, or URLs.
+
 1. Restore into an isolated environment with outbound networking disabled and PostHog capture unset.
 2. Restore PostgreSQL, run migration verification, then restore the artifact volume.
 3. Run database verification and artifact reconciliation. Treat missing, unexpected, or digest-mismatched objects as a failed drill.

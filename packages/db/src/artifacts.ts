@@ -16,7 +16,7 @@ export interface ArtifactCatalogInput {
   statusCode?: number;
   policyId?: string;
   retentionClass: string;
-  deletionDueAt?: Date;
+  deletionDueAt: Date;
   compression?: string;
 }
 
@@ -40,6 +40,7 @@ export class PostgresArtifactMetadata implements ArtifactRetentionMetadata {
 
   async record(input: ArtifactCatalogInput): Promise<ArtifactCatalogRecord> {
     if (!input.retentionClass.trim()) throw new Error("artifact retention class is required");
+    if (!Number.isFinite(input.deletionDueAt.getTime())) throw new Error("artifact deletion deadline is required");
     requireArtifactDigest(input.stored.digest);
     if (input.stored.storageKey !== artifactStorageKey(input.stored.digest)) throw new Error("local artifact storage key does not match its digest");
     if (!Number.isSafeInteger(input.stored.byteLength) || input.stored.byteLength < 0) throw new Error("artifact byte length is invalid");
@@ -65,7 +66,10 @@ export class PostgresArtifactMetadata implements ArtifactRetentionMetadata {
         retrieved_at = CASE WHEN artifacts.storage_state IN ('deleted', 'missing', 'delete_failed') THEN EXCLUDED.retrieved_at ELSE artifacts.retrieved_at END,
         response_headers = CASE WHEN artifacts.storage_state IN ('deleted', 'missing', 'delete_failed') THEN EXCLUDED.response_headers ELSE artifacts.response_headers END,
         retention_class = CASE WHEN artifacts.storage_state IN ('deleted', 'missing', 'delete_failed') THEN EXCLUDED.retention_class ELSE artifacts.retention_class END,
-        deletion_due_at = CASE WHEN artifacts.storage_state IN ('deleted', 'missing', 'delete_failed') THEN EXCLUDED.deletion_due_at ELSE artifacts.deletion_due_at END,
+        deletion_due_at = CASE
+          WHEN artifacts.storage_state IN ('deleted', 'missing', 'delete_failed') THEN EXCLUDED.deletion_due_at
+          ELSE greatest(artifacts.deletion_due_at, EXCLUDED.deletion_due_at)
+        END,
         storage_state = CASE WHEN artifacts.storage_state IN ('deleted', 'missing', 'delete_failed') THEN 'present' ELSE artifacts.storage_state END,
         deletion_started_at = CASE WHEN artifacts.storage_state IN ('deleted', 'missing', 'delete_failed') THEN NULL ELSE artifacts.deletion_started_at END,
         deleted_at = CASE WHEN artifacts.storage_state IN ('deleted', 'missing', 'delete_failed') THEN NULL ELSE artifacts.deleted_at END,

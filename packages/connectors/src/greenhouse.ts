@@ -97,6 +97,17 @@ function tokenFromCandidate(url: URL): { token?: string; recognizedHost: boolean
   return { recognizedHost: false };
 }
 
+function isHostedJobIdentity(url: URL, expectedToken: string, expectedJobId: string): boolean {
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  const segments = url.pathname.split("/").filter(Boolean);
+  return GREENHOUSE_BOARD_HOSTS.includes(hostname as (typeof GREENHOUSE_BOARD_HOSTS)[number])
+    && !url.port && !url.username && !url.password && !url.search && !url.hash
+    && segments.length === 3
+    && segments[0] === expectedToken
+    && segments[1] === "jobs"
+    && segments[2] === expectedJobId;
+}
+
 function canonicalApiBase(token: string): string {
   return `https://${GREENHOUSE_API_HOST}/v1/boards/${token}`;
 }
@@ -205,8 +216,7 @@ export function createGreenhouseConnector(version = GREENHOUSE_CONNECTOR_VERSION
     let duplicateCount = 0;
     let identityMismatch = false;
     for (const job of parsed.data.jobs) {
-      const hostedJob = tokenFromCandidate(new URL(job.absolute_url));
-      if (hostedJob.recognizedHost && hostedJob.token !== candidate.token) {
+      if (!isHostedJobIdentity(new URL(job.absolute_url), candidate.token, String(job.id))) {
         identityMismatch = true;
         continue;
       }
@@ -251,8 +261,7 @@ export function createGreenhouseConnector(version = GREENHOUSE_CONNECTOR_VERSION
     const result = GreenhouseDetailSchema.safeParse(decoded);
     if (!result.success) throw new GreenhouseConnectorError("greenhouse_schema_invalid");
     const job = result.data;
-    const hostedJob = tokenFromCandidate(new URL(job.absolute_url));
-    if (hostedJob.recognizedHost && hostedJob.token !== candidate.token) throw new GreenhouseConnectorError("greenhouse_identity_mismatch");
+    if (!isHostedJobIdentity(new URL(job.absolute_url), candidate.token, String(job.id))) throw new GreenhouseConnectorError("greenhouse_identity_mismatch");
     if (String(job.id) !== item.sourceJobId || job.absolute_url !== item.canonicalSourceUrl) throw new GreenhouseConnectorError("greenhouse_identity_mismatch");
     const sanitized = sanitizedContent(job.content);
     if (!sanitized.text) throw new GreenhouseConnectorError("greenhouse_schema_invalid");

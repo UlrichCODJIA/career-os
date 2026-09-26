@@ -11,6 +11,8 @@ Raw source evidence is stored under `ARTIFACT_ROOT` by SHA-256 digest. Object ke
 
 Identical bytes reuse one object and one `artifacts.sha256` row. Raw artifacts remain untrusted and must not be rendered directly.
 
+Every production write carries an enforceable deletion deadline. `standard` evidence is retained for 30 days, `licensed-ephemeral` evidence for 24 hours, and synthetic `verification` evidence for one hour; unknown classes fail the scan closed. A repeated digest extends the shared object's deadline to the latest active occurrence, preventing a newer retained reference from being deleted early. Migration `0010_artifact_retention_deadlines.sql` backfills previously catalogued objects and makes deadlines mandatory.
+
 ## Retention states
 
 - `present`: object is expected to exist.

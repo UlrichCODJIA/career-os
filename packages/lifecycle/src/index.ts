@@ -1,5 +1,6 @@
 export const LIFECYCLE_VERSION = "1.0.0";
 export const CLOSURE_CONFIRMATION_MS = 30 * 60 * 1_000;
+export const EMPTY_SOURCE_CONFIRMATION_MAX_MS = 24 * 60 * 60 * 1_000;
 
 export type ListingState = "active" | "possibly_closed" | "closed";
 export interface ListingLifecycleInput {
@@ -52,4 +53,27 @@ export function evaluateClosureCircuitBreaker(input: CircuitBreakerInput): Circu
     return { tripped: true, reason: "closure_spike", ratio: Number((missing / input.activeListingCount).toFixed(4)) };
   }
   return { tripped: false };
+}
+
+export interface EmptySourceConfirmationInput {
+  connectorReason: string;
+  observedJobCount: number;
+  activeListingCount: number;
+  historicalListingCount: number;
+  boardHash?: string;
+  previousBoardHash?: string | null;
+  previousEmptyAt?: string;
+  observedAt: string;
+}
+
+export function confirmsNeverPopulatedEmptySource(input: EmptySourceConfirmationInput): boolean {
+  for (const count of [input.observedJobCount, input.activeListingCount, input.historicalListingCount]) {
+    if (!Number.isSafeInteger(count) || count < 0) throw new Error("invalid_lifecycle_count");
+  }
+  if (input.connectorReason !== "suspicious_empty" || input.observedJobCount !== 0
+    || input.activeListingCount !== 0 || input.historicalListingCount !== 0
+    || !input.boardHash || !input.previousBoardHash || input.boardHash !== input.previousBoardHash
+    || !input.previousEmptyAt) return false;
+  const elapsed = instant(input.observedAt) - instant(input.previousEmptyAt);
+  return elapsed >= CLOSURE_CONFIRMATION_MS && elapsed <= EMPTY_SOURCE_CONFIRMATION_MAX_MS;
 }

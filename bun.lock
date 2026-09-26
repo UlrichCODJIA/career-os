@@ -150,6 +150,13 @@
         "zod": "4.1.5",
       },
     },
+    "packages/release-gates": {
+      "name": "@career-os/release-gates",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.1.5",
+      },
+    },
     "packages/safe-fetch": {
       "name": "@career-os/safe-fetch",
       "version": "0.0.0",
@@ -189,6 +196,8 @@
     "@career-os/opportunity-resolver": ["@career-os/opportunity-resolver@workspace:packages/opportunity-resolver"],
 
     "@career-os/pilot-registry": ["@career-os/pilot-registry@workspace:packages/pilot-registry"],
+
+    "@career-os/release-gates": ["@career-os/release-gates@workspace:packages/release-gates"],
 
     "@career-os/safe-fetch": ["@career-os/safe-fetch@workspace:packages/safe-fetch"],
 

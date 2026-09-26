@@ -64,6 +64,7 @@ export interface SafeFetchClientOptions {
   readonly resolve?: (hostname: string) => Promise<readonly { address: string; family: 4 | 6 }[]>;
   readonly onDecision?: (decision: SafeFetchDecision) => void;
   readonly now?: () => number;
+  readonly wait?: (milliseconds: number) => Promise<void>;
 }
 
 export class SafeFetchError extends Error {
@@ -152,6 +153,7 @@ export class SafeFetchClient implements SafeFetchPort {
   private readonly resolveHost: NonNullable<SafeFetchClientOptions["resolve"]>;
   private readonly emit: (decision: SafeFetchDecision) => void;
   private readonly now: () => number;
+  private readonly wait: (milliseconds: number) => Promise<void>;
   private readonly budgets = new Map<string, Budget>();
 
   constructor(options: SafeFetchClientOptions = {}) {
@@ -162,13 +164,14 @@ export class SafeFetchClient implements SafeFetchPort {
     });
     this.emit = options.onDecision ?? (() => undefined);
     this.now = options.now ?? Date.now;
+    this.wait = options.wait ?? ((milliseconds) => Bun.sleep(milliseconds));
   }
 
   async fetch(request: SafeFetchRequest): Promise<SafeFetchResult> {
     const decisions: SafeFetchDecision[] = [];
     const policy = request.policy;
     this.validatePolicy(policy);
-    const budget = this.acquire(policy, decisions);
+    const budget = await this.acquire(policy, decisions);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), policy.timeoutMs);
     try {
@@ -263,18 +266,23 @@ export class SafeFetchClient implements SafeFetchPort {
     return value.length > 0 && value.length <= 1_024 && !/[\r\n\0]/.test(value);
   }
 
-  private acquire(policy: SafeFetchPolicy, decisions: SafeFetchDecision[]): Budget {
-    const window = Math.floor(this.now() / 60_000);
-    let budget = this.budgets.get(policy.id);
-    if (!budget || budget.window !== window) {
-      budget = { window, count: 0, active: 0 };
-      this.budgets.set(policy.id, budget);
+  private async acquire(policy: SafeFetchPolicy, decisions: SafeFetchDecision[]): Promise<Budget> {
+    for (;;) {
+      const current = this.now();
+      const window = Math.floor(current / 60_000);
+      let budget = this.budgets.get(policy.id);
+      if (!budget || budget.window !== window) {
+        budget = { window, count: 0, active: 0 };
+        this.budgets.set(policy.id, budget);
+      }
+      if (budget.active >= policy.maxConcurrency) throw new SafeFetchError("concurrency_limit_exceeded", decisions);
+      if (budget.count < policy.maxRequestsPerMinute) {
+        budget.count += 1;
+        budget.active += 1;
+        return budget;
+      }
+      await this.wait((window + 1) * 60_000 - current + 1);
     }
-    if (budget.active >= policy.maxConcurrency) throw new SafeFetchError("concurrency_limit_exceeded", decisions);
-    if (budget.count >= policy.maxRequestsPerMinute) throw new SafeFetchError("rate_limit_exceeded", decisions);
-    budget.count += 1;
-    budget.active += 1;
-    return budget;
   }
 
   private record(decisions: SafeFetchDecision[], decision: SafeFetchDecision): void {

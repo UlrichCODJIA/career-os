@@ -28,6 +28,21 @@ export interface QueueHealth {
   expiredLeases: number;
 }
 
+export interface TerminalScanRecoveryCommand {
+  actorId: string;
+  idempotencyKey: string;
+  reason: string;
+  failedAfter: Date;
+  failedBefore: Date;
+  errorCodes: readonly string[];
+  limit?: number;
+}
+
+export interface TerminalScanRecoveryResult {
+  recovered: number;
+  selected: number;
+}
+
 export class QueueRuleError extends Error {
   constructor(public readonly code: string) {
     super(code);
@@ -49,9 +64,10 @@ function retryDelayMs(attempt: number, random: number): number {
   return Math.floor(capMs * Math.min(0.999999, Math.max(0, random)));
 }
 
-function deterministicJitterMs(sourceId: string, bucket: number, cadenceSeconds: number): number {
+function deterministicIntervalMs(sourceId: string, bucket: number, cadenceSeconds: number): number {
   const prefix = createHash("sha256").update(`${sourceId}:${bucket}`).digest("hex").slice(0, 8);
-  return Math.floor(cadenceSeconds * 1000 * 0.1 * (Number.parseInt(prefix, 16) / 0xffffffff));
+  // Early-only jitter spreads load without ever violating a twice-per-24-hours cadence.
+  return Math.floor(cadenceSeconds * 1000 * (0.9 + 0.1 * (Number.parseInt(prefix, 16) / 0xffffffff)));
 }
 
 export class PostgresWorkQueue {
@@ -112,11 +128,120 @@ export class PostgresWorkQueue {
           ${0}, ${"queued"}, ${now.toISOString()}
         ) ON CONFLICT DO NOTHING RETURNING id`;
         enqueued += inserted.length;
-        const jitterMs = deterministicJitterMs(source.id, bucket, source.cadence_seconds);
-        const nextScanAt = new Date(now.getTime() + source.cadence_seconds * 1000 + jitterMs);
+        const nextScanAt = new Date(now.getTime() + deterministicIntervalMs(source.id, bucket, source.cadence_seconds));
         await tx`UPDATE sources SET next_scan_at = ${nextScanAt.toISOString()} WHERE id = ${source.id}`;
       }
       return { elected: true, enqueued, sourceIds: sources.map((source) => source.id) };
+    });
+  }
+
+  async recoverTerminalSourceScans(command: TerminalScanRecoveryCommand): Promise<TerminalScanRecoveryResult> {
+    const limit = command.limit ?? 1_000;
+    const allowedCodes = new Set(["lease_expired", "resource_limit_exceeded", "scan_failed", "upstream_timeout"]);
+    if (!command.actorId.trim() || command.actorId.length > 200) throw new QueueRuleError("invalid_recovery_actor");
+    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(command.idempotencyKey)) throw new QueueRuleError("invalid_recovery_idempotency_key");
+    if (command.reason.trim().length < 8 || command.reason.length > 1_000) throw new QueueRuleError("invalid_recovery_reason");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1_000) throw new QueueRuleError("invalid_recovery_limit");
+    if (command.errorCodes.length < 1 || command.errorCodes.length > allowedCodes.size
+      || new Set(command.errorCodes).size !== command.errorCodes.length
+      || command.errorCodes.some((code) => !allowedCodes.has(code))) {
+      throw new QueueRuleError("invalid_recovery_error_codes");
+    }
+    const failedAfter = command.failedAfter.getTime();
+    const failedBefore = command.failedBefore.getTime();
+    if (!Number.isFinite(failedAfter) || !Number.isFinite(failedBefore) || failedAfter >= failedBefore
+      || failedBefore - failedAfter > 7 * 86_400_000) {
+      throw new QueueRuleError("invalid_recovery_window");
+    }
+    const request = {
+      failedAfter: command.failedAfter.toISOString(), failedBefore: command.failedBefore.toISOString(),
+      errorCodes: [...command.errorCodes].sort(), limit, reason: command.reason,
+    };
+    const requestHash = createHash("sha256").update(JSON.stringify(request)).digest("hex");
+    const operation = "queue.recover_terminal_source_scans";
+    return this.sql.begin(async (tx) => {
+      const idempotencyId = Bun.randomUUIDv7();
+      const insertedRecord = await tx<{ id: string }[]>`INSERT INTO idempotency_records (
+        id, actor_id, operation, idempotency_key, request_hash
+      ) VALUES (${idempotencyId}, ${command.actorId}, ${operation}, ${command.idempotencyKey}, ${requestHash})
+      ON CONFLICT (actor_id, operation, idempotency_key) DO NOTHING RETURNING id`;
+      if (insertedRecord.length === 0) {
+        const existing = (await tx<{ request_hash: string; response_json: unknown }[]>`
+          SELECT request_hash, response_json FROM idempotency_records
+          WHERE actor_id = ${command.actorId} AND operation = ${operation}
+            AND idempotency_key = ${command.idempotencyKey} FOR UPDATE
+        `)[0];
+        if (!existing || existing.request_hash !== requestHash) throw new QueueRuleError("idempotency_key_reused");
+        if (existing.response_json === null) throw new QueueRuleError("idempotency_incomplete");
+        return jsonObject(existing.response_json) as unknown as TerminalScanRecoveryResult;
+      }
+
+      const sources = await tx<{
+        id: string; cadence_seconds: number; connector_id: string; connector_version: string;
+        tenant_key: string; failed_job_id: string;
+      }[]>`
+        SELECT source.id, source.cadence_seconds, source.connector_id, source.connector_version,
+          source.tenant_key, failed.id AS failed_job_id
+        FROM sources source
+        JOIN source_policies policy ON policy.id = source.policy_id
+        JOIN LATERAL (
+          SELECT job.id, job.completed_at
+          FROM work_jobs job
+          WHERE job.type = 'scan_source' AND job.status = 'terminal_failed'
+            AND job.payload_json->>'sourceId' = source.id::text
+            AND job.completed_at >= ${request.failedAfter} AND job.completed_at < ${request.failedBefore}
+            AND job.last_error_code = ANY(string_to_array(${request.errorCodes.join(",")}, ','))
+          ORDER BY job.completed_at DESC, job.id DESC LIMIT 1
+        ) failed ON true
+        WHERE source.enabled AND source.policy_review_due_at > clock_timestamp()
+          AND policy.state = 'approved' AND policy.expires_at > clock_timestamp()
+          AND EXISTS (SELECT 1 FROM ownership_evidence evidence WHERE evidence.source_id = source.id AND evidence.confidence >= 0.9)
+          AND NOT EXISTS (
+            SELECT 1 FROM work_jobs active
+            WHERE active.type = 'scan_source' AND active.status IN ('queued', 'leased', 'retryable_failed')
+              AND active.payload_json->>'sourceId' = source.id::text
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM source_scans scan
+            WHERE scan.source_id = source.id AND scan.completeness_reason = 'complete'
+              AND scan.ended_at > failed.completed_at
+          )
+        ORDER BY failed.completed_at, source.id
+        LIMIT ${limit}
+        FOR UPDATE OF source SKIP LOCKED
+      `;
+
+      const now = this.clock.now();
+      let recovered = 0;
+      for (const source of sources) {
+        const bucket = Math.floor(now.getTime() / 1000 / source.cadence_seconds);
+        const payload = JSON.stringify({
+          sourceId: source.id, connectorId: source.connector_id, connectorVersion: source.connector_version,
+          tenantKey: source.tenant_key, cadenceBucket: bucket, recoveredFromJobId: source.failed_job_id,
+        });
+        const inserted = await tx<{ id: string }[]>`INSERT INTO work_jobs (
+          id, type, dedupe_key, payload_json, priority, status, scheduled_at
+        ) VALUES (
+          ${Bun.randomUUIDv7()}, ${"scan_source"}, ${`scan_source_recovery:${source.id}:${command.idempotencyKey}`},
+          ${payload}::text::jsonb, ${10}, ${"queued"}, ${now.toISOString()}
+        ) ON CONFLICT DO NOTHING RETURNING id`;
+        if (inserted.length === 0) continue;
+        recovered += 1;
+        await tx`UPDATE sources SET next_scan_at = ${new Date(now.getTime() + deterministicIntervalMs(source.id, bucket, source.cadence_seconds)).toISOString()}
+          WHERE id = ${source.id}`;
+      }
+      const result = { recovered, selected: sources.length };
+      await tx`INSERT INTO audit_events (
+        id, actor_type, actor_id, action, target_type, target_id, reason, correlation_id, metadata
+      ) VALUES (
+        ${Bun.randomUUIDv7()}, ${"operator"}, ${command.actorId}, ${"queue.terminal_scans_recovered"},
+        ${"work_queue"}, ${null}, ${command.reason}, ${Bun.randomUUIDv7()},
+        ${JSON.stringify({ ...result, failedAfter: request.failedAfter, failedBefore: request.failedBefore,
+          errorCodes: request.errorCodes, idempotencyKey: command.idempotencyKey })}::text::jsonb
+      )`;
+      await tx`UPDATE idempotency_records SET response_json = ${JSON.stringify(result)}::text::jsonb,
+        completed_at = clock_timestamp() WHERE id = ${idempotencyId}`;
+      return result;
     });
   }
 

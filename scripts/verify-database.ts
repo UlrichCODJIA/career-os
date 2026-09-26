@@ -61,29 +61,29 @@ try {
   await admin.unsafe(`CREATE DATABASE ${quotedDatabase} TEMPLATE template0`);
 
   const concurrent = await Promise.all([migrate({ databaseUrl: testUrl }), migrate({ databaseUrl: testUrl })]);
-  assert(concurrent.flatMap((result) => result.applied).length === 9, "concurrent migration runners must apply each file once");
-  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 9, "waiting migration runner must verify every applied file");
+  assert(concurrent.flatMap((result) => result.applied).length === 10, "concurrent migration runners must apply each file once");
+  assert(concurrent.flatMap((result) => result.alreadyApplied).length === 10, "waiting migration runner must verify every applied file");
 
   const replay = await migrate({ databaseUrl: testUrl });
-  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 9, "migration replay must be a verified no-op");
+  assert(replay.applied.length === 0 && replay.alreadyApplied.length === 10, "migration replay must be a verified no-op");
 
   const productionDirectory = resolve(import.meta.dir, "../db/migrations");
   const productionMigrations = await loadMigrationFiles(productionDirectory);
-  assert(productionMigrations.length === 9, "all production migrations must exist");
+  assert(productionMigrations.length === 10, "all production migrations must exist");
   upgradeDirectory = await mkdtemp(join(tmpdir(), "career-os-migrations-"));
   for (const migration of productionMigrations) {
     await writeFile(join(upgradeDirectory, migration.name), migration.content, "utf8");
   }
   await writeFile(
-    join(upgradeDirectory, "0010_forward_upgrade_probe.sql"),
+    join(upgradeDirectory, "0011_forward_upgrade_probe.sql"),
     "CREATE TABLE migration_forward_probe (id integer PRIMARY KEY);\n",
     "utf8",
   );
   const upgrade = await migrate({ databaseUrl: testUrl, directory: upgradeDirectory });
-  assert(upgrade.applied.join() === "0010_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
+  assert(upgrade.applied.join() === "0011_forward_upgrade_probe.sql", "forward upgrade must apply only the next migration");
 
   await writeFile(
-    join(upgradeDirectory, "0011_atomic_failure_probe.sql"),
+    join(upgradeDirectory, "0012_atomic_failure_probe.sql"),
     "CREATE TABLE migration_atomic_failure_probe (id integer PRIMARY KEY);\nSELECT missing_function_for_atomicity_test();\n",
     "utf8",
   );
@@ -96,17 +96,17 @@ try {
   const atomicFailure = await database<{ tableExists: boolean; ledgerRows: number }[]>`
     SELECT
       to_regclass('public.migration_atomic_failure_probe') IS NOT NULL AS "tableExists",
-      (SELECT count(*)::int FROM schema_migrations WHERE name = '0011_atomic_failure_probe.sql') AS "ledgerRows"
+      (SELECT count(*)::int FROM schema_migrations WHERE name = '0012_atomic_failure_probe.sql') AS "ledgerRows"
   `;
   assert(!atomicFailure[0]?.tableExists && atomicFailure[0]?.ledgerRows === 0, "failed migration and ledger write must roll back together");
 
   const originalUpgradeChecksum = (await database<{ checksum: string }[]>`
-    SELECT checksum FROM schema_migrations WHERE name = '0010_forward_upgrade_probe.sql'
+    SELECT checksum FROM schema_migrations WHERE name = '0011_forward_upgrade_probe.sql'
   `)[0]?.checksum;
   assert(originalUpgradeChecksum !== undefined, "forward migration checksum must be recorded");
-  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0010_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${"0".repeat(64)} WHERE name = '0011_forward_upgrade_probe.sql'`;
   await expectRejected(migrate({ databaseUrl: testUrl, directory: upgradeDirectory }), "checksum drift must reject migration startup");
-  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0010_forward_upgrade_probe.sql'`;
+  await database`UPDATE schema_migrations SET checksum = ${originalUpgradeChecksum} WHERE name = '0011_forward_upgrade_probe.sql'`;
 
   const expectedTables = [
     "artifacts",
@@ -515,6 +515,11 @@ try {
   await electedLockHolder.close();
   const schedulerResults = await Promise.all([firstQueue.scheduleDueSources(), secondQueue.scheduleDueSources()]);
   assert(schedulerResults.reduce((sum, result) => sum + result.enqueued, 0) === 1, "concurrent schedulers must enqueue one deterministic source job");
+  const scheduledCadence = (await database<{ nextScanAt: Date | string }[]>`
+    SELECT next_scan_at AS "nextScanAt" FROM sources WHERE id = ${verified.sourceId}
+  `)[0]?.nextScanAt;
+  assert(scheduledCadence !== undefined && new Date(scheduledCadence).getTime() <= queueTime.value.getTime() + 43_200_000,
+    "deterministic load spreading must not lengthen a twice-daily source cadence");
   await database`UPDATE sources SET next_scan_at = ${queueTime.value.toISOString()} WHERE id = ${verified.sourceId}`;
   const duplicateSchedule = await firstQueue.scheduleDueSources();
   assert(duplicateSchedule.enqueued === 0, "the active dedupe key must prevent duplicate enqueue within a cadence bucket");
@@ -582,6 +587,53 @@ try {
   const scanLease = (await firstQueue.claim("scan-ledger-worker"))[0];
   assert(scanLease?.id === scanJobId, "scan ledger fixture must be leased");
   const scanLedger = new PostgresScanLedger(database, { random: () => 0 });
+  const emptySourceId = crypto.randomUUID();
+  await database`INSERT INTO sources (
+    id, company_id, connector_id, tenant_key, board_url, api_base_url, region, verification_method,
+    verified_at, enabled, health_state, policy_id, policy_review_due_at, connector_version
+  ) VALUES (
+    ${emptySourceId}, ${verified.companyId}, ${"greenhouse"}, ${`empty-${emptySourceId}`},
+    ${`https://boards.greenhouse.io/empty-${emptySourceId}`},
+    ${`https://boards-api.greenhouse.io/v1/boards/empty-${emptySourceId}`}, ${"global"}, ${"human_review"},
+    ${new Date()}, ${false}, ${"unknown"}, ${policyResult.policy.id}, ${new Date(Date.now() + 86_400_000)}, ${"1.0.0"}
+  )`;
+  async function commitEmptyProbe(endedAt: Date) {
+    const jobId = crypto.randomUUID();
+    const token = crypto.randomUUID();
+    const workerId = `empty-source-verifier-${jobId}`;
+    await database!`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at, attempt,
+      leased_at, lease_expires_at, lease_owner, lease_token, lease_generation)
+      VALUES (${jobId}, ${"scan_source"}, ${`empty-source:${jobId}`}, ${"{}"}::text::jsonb, ${"leased"}, ${endedAt}, ${1},
+        ${new Date()}, ${new Date(Date.now() + 2 * 60 * 60_000)}, ${workerId}, ${token}, ${1})`;
+    return scanLedger.commit({
+      lease: { id: jobId, leaseToken: token, leaseGeneration: 1 }, workerId, sourceId: emptySourceId,
+      startedAt: new Date(endedAt.getTime() - 100), endedAt, connectorId: "greenhouse", connectorVersion: "1.0.0",
+      safeFetchPolicyVersion: "1.0.0", policyId: policyResult.policy.id,
+      fetchMetadata: { requestCount: 1, status: "parsed" }, completenessReason: "suspicious_empty",
+      responseArtifactIds: [catalogedArtifact.id], observations: [], byteCount: storedArtifact.byteLength,
+      boardHash: "empty-board-v1",
+    });
+  }
+  const emptyFirstAt = new Date();
+  const emptyFirst = await commitEmptyProbe(emptyFirstAt);
+  const emptySecond = await commitEmptyProbe(new Date(emptyFirstAt.getTime() + 30 * 60_000));
+  const emptyEvidence = await database<{ health: string; firstState: string; firstReason: string;
+    secondState: string; secondReason: string; confirmation: string | null; listings: number }[]>`
+    SELECT
+      (SELECT health_state FROM sources WHERE id = ${emptySourceId}) AS health,
+      (SELECT completeness_state FROM source_scans WHERE id = ${emptyFirst.scanId}) AS "firstState",
+      (SELECT completeness_reason FROM source_scans WHERE id = ${emptyFirst.scanId}) AS "firstReason",
+      (SELECT completeness_state FROM source_scans WHERE id = ${emptySecond.scanId}) AS "secondState",
+      (SELECT completeness_reason FROM source_scans WHERE id = ${emptySecond.scanId}) AS "secondReason",
+      (SELECT fetch_metadata->>'emptyConfirmation' FROM source_scans WHERE id = ${emptySecond.scanId}) AS confirmation,
+      (SELECT count(*)::int FROM source_listings WHERE source_id = ${emptySourceId}) AS listings
+  `;
+  assert(emptyEvidence[0]?.health === "healthy" && emptyEvidence[0].firstState === "incomplete"
+    && emptyEvidence[0].firstReason === "suspicious_empty" && emptyEvidence[0].secondState === "complete"
+    && emptyEvidence[0].secondReason === "complete"
+    && emptyEvidence[0].confirmation === "two_separated_matching_empty_scans_without_listing_history"
+    && emptyEvidence[0].listings === 0,
+  "two matching separated empty scans may confirm only a never-populated source without creating listing history");
   const scanStarted = new Date(queueTime.value.getTime() - 200);
   const scanEnded = new Date(queueTime.value.getTime() - 100);
   const completeScanInput: Parameters<PostgresScanLedger["commit"]>[0] = {
@@ -658,6 +710,28 @@ try {
   assert(ledgerCounts?.scans === 1 && ledgerCounts.artifacts === 1 && ledgerCounts.observations === 1 && ledgerCounts.versions === 1 && ledgerCounts.assertions === 6, "duplicate delivery must not duplicate scan or evidence rows");
   await expectRejected(database`DELETE FROM source_observations WHERE source_scan_id = ${scanCommit.scanId}`, "source observations must be append-only");
   await expectRejected(database`UPDATE source_scans SET board_hash = ${"tampered"} WHERE id = ${scanCommit.scanId}`, "completed source scans must be immutable");
+
+  async function commitConnectorVersionProbe(connectorVersion: string, endedAt: Date) {
+    await database!`UPDATE sources SET connector_version = ${connectorVersion} WHERE id = ${verified.sourceId}`;
+    const jobId = crypto.randomUUID();
+    const token = crypto.randomUUID();
+    const workerId = `connector-version-verifier-${connectorVersion}`;
+    await database!`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at, attempt,
+      leased_at, lease_expires_at, lease_owner, lease_token, lease_generation)
+      VALUES (${jobId}, ${"scan_source"}, ${`connector-version:${jobId}`}, ${"{}"}::text::jsonb, ${"leased"}, ${endedAt}, ${1},
+        ${new Date(endedAt.getTime() - 1_000)}, ${new Date(endedAt.getTime() + 60_000)}, ${workerId}, ${token}, ${1})`;
+    return scanLedger.commit({ ...completeScanInput, lease: { id: jobId, leaseToken: token, leaseGeneration: 1 },
+      workerId, startedAt: new Date(endedAt.getTime() - 500), endedAt, connectorVersion,
+      boardHash: `connector-version-${connectorVersion}` });
+  }
+  const upgradedScan = await commitConnectorVersionProbe("1.1.0", new Date(scanEnded.getTime() + 5 * 60_000));
+  const rolledBackScan = await commitConnectorVersionProbe("1.0.0", new Date(scanEnded.getTime() + 10 * 60_000));
+  const connectorVersionHistory = await database<{ connectorVersion: string }[]>`
+    SELECT connector_version AS "connectorVersion" FROM source_scans
+    WHERE id IN ${database([scanCommit.scanId, upgradedScan.scanId, rolledBackScan.scanId])}
+    ORDER BY started_at, id`;
+  assert(connectorVersionHistory.map((row) => row.connectorVersion).join(",") === "1.0.0,1.1.0,1.0.0",
+    "connector upgrade and rollback must retain immutable scan history for every executed version");
 
   const opportunityResolution = new PostgresOpportunityResolutionStore(database);
   const evidenceRows = await database<{ assertionId: string; listingId: string }[]>`SELECT assertion.id AS "assertionId",
@@ -841,9 +915,24 @@ try {
   await expectRejected(database`DELETE FROM opportunity_problem_reports WHERE id = ${report.reportId}`,
     "problem reports must be append-only");
 
+  queueTime.value = new Date(collapseAt.getTime() + 60 * 60_000);
+  const beforeConnectorOutage = (await database<{ events: number; listingState: string; opportunityStatus: string }[]>`
+    SELECT
+      (SELECT count(*)::int FROM lifecycle_events WHERE aggregate_type = 'source_listing'
+        AND aggregate_id = ${evidenceRows[0]!.listingId}) AS events,
+      lifecycle_state AS "listingState",
+      (SELECT status FROM opportunities WHERE id = ${createdOpportunity.opportunityId}) AS "opportunityStatus"
+    FROM source_listings WHERE id = ${evidenceRows[0]!.listingId}`)[0];
   const failedJobId = crypto.randomUUID();
+  const failedPayload = JSON.stringify({
+    sourceId: verified.sourceId,
+    connectorId: "greenhouse",
+    connectorVersion: "1.0.0",
+    tenantKey: "acme",
+    cadenceBucket: 1,
+  });
   await database`INSERT INTO work_jobs (id, type, dedupe_key, payload_json, status, scheduled_at, max_attempts)
-    VALUES (${failedJobId}, ${"scan_source"}, ${`scan-failure:${failedJobId}`}, ${"{}"}::text::jsonb, ${"queued"}, ${queueTime.value}, ${2})`;
+    VALUES (${failedJobId}, ${"scan_source"}, ${`scan-failure:${failedJobId}`}, ${failedPayload}::text::jsonb, ${"queued"}, ${queueTime.value}, ${2})`;
   const failedLease = (await firstQueue.claim("scan-failure-worker"))[0];
   assert(failedLease?.id === failedJobId, "failed scan fixture must be leased");
   await scanLedger.fail({
@@ -868,6 +957,47 @@ try {
     FROM sources WHERE id = ${verified.sourceId}
   `)[0];
   assert(retryOutcome?.attempts === 2 && retryOutcome.status === "terminal_failed" && retryOutcome.state === "degraded" && retryOutcome.failures === 2, "scan retry outcomes and source health must derive from durable completed attempts");
+  const afterConnectorOutage = (await database<{ events: number; listingState: string; opportunityStatus: string }[]>`
+    SELECT
+      (SELECT count(*)::int FROM lifecycle_events WHERE aggregate_type = 'source_listing'
+        AND aggregate_id = ${evidenceRows[0]!.listingId}) AS events,
+      lifecycle_state AS "listingState",
+      (SELECT status FROM opportunities WHERE id = ${createdOpportunity.opportunityId}) AS "opportunityStatus"
+    FROM source_listings WHERE id = ${evidenceRows[0]!.listingId}`)[0];
+  assert(beforeConnectorOutage !== undefined && afterConnectorOutage !== undefined
+    && afterConnectorOutage.events === beforeConnectorOutage.events
+    && afterConnectorOutage.listingState === beforeConnectorOutage.listingState
+    && afterConnectorOutage.opportunityStatus === beforeConnectorOutage.opportunityStatus,
+    "a connector outage must create zero closure events and preserve listing and opportunity lifecycle state");
+
+  const recoveryCommand = {
+    actorId,
+    idempotencyKey: "terminal-recovery-0001",
+    reason: "Recover verified transient scan failures after transport remediation",
+    failedAfter: new Date(queueTime.value.getTime() - 1_000),
+    failedBefore: new Date(queueTime.value.getTime() + 1_000),
+    errorCodes: ["upstream_timeout"] as const,
+    limit: 10,
+  };
+  const recovery = await firstQueue.recoverTerminalSourceScans(recoveryCommand);
+  const recoveryReplay = await firstQueue.recoverTerminalSourceScans(recoveryCommand);
+  assert(recovery.recovered === 1 && recovery.selected === 1
+    && recoveryReplay.recovered === recovery.recovered && recoveryReplay.selected === recovery.selected,
+    `terminal scan recovery must append one replacement job and replay idempotently (${JSON.stringify({ recovery, recoveryReplay })})`);
+  const recoveredLease = (await firstQueue.claim("recovery-verifier", 1, 300, "scan_source"))[0];
+  assert(recoveredLease?.payload.recoveredFromJobId === failedJobId,
+    "recovery must preserve an internal link to the terminal job without mutating it");
+  await firstQueue.cancel(recoveredLease.id, "Verification cleanup preserves both queue records");
+  const recoveryEvidence = (await database<{ terminal: number; recovered: number; audits: number }[]>`
+    SELECT
+      count(*) FILTER (WHERE id = ${failedJobId} AND status = 'terminal_failed')::int AS terminal,
+      count(*) FILTER (WHERE payload_json->>'recoveredFromJobId' = ${failedJobId})::int AS recovered,
+      (SELECT count(*)::int FROM audit_events WHERE action = 'queue.terminal_scans_recovered'
+        AND actor_id = ${actorId}) AS audits
+    FROM work_jobs
+  `)[0];
+  assert(recoveryEvidence?.terminal === 1 && recoveryEvidence.recovered === 1 && recoveryEvidence.audits === 1,
+    "recovery must retain terminal history and append exactly one aggregate operator audit event");
 
   const concurrentRetentionClaims = await Promise.all([
     artifactMetadata.claimDue(artifactNow, 10),
@@ -883,7 +1013,7 @@ try {
   `)[0];
   assert(deletedArtifact?.state === "deleted" && deletedArtifact.deletedAt !== null, "retention must preserve deleted metadata as a tombstone");
 
-  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, lifecycle closure/reopening and circuit breakers, redacted operator evidence and audit replay, bounded canonical APIs and immutable reports, queue fencing, scan ledger idempotency, and artifact retention reconciliation.");
+  console.log("Database verification passed: migrations, registry governance, reversible canonical resolution, lifecycle closure/reopening and circuit breakers, zero-closure connector outage injection, connector upgrade/rollback history, redacted operator evidence and audit replay, bounded canonical APIs and immutable reports, queue fencing, idempotent terminal recovery with immutable history, scan ledger idempotency, and artifact retention reconciliation.");
 } finally {
   if (database) await database.close();
   if (upgradeDirectory) await rm(upgradeDirectory, { recursive: true, force: true });
