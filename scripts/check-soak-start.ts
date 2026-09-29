@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { createDatabase } from "../packages/db/src/index.ts";
 import type { SQL } from "bun";
-import { PilotRegistryManifestSchema, pilotRegistryDigest } from "../packages/pilot-registry/src/index.ts";
+import { PilotRegistryManifestSchema } from "../packages/pilot-registry/src/index.ts";
 import { deployedReleaseCommit } from "./release-build-identity.ts";
+import { registryArchiveDigest } from "./registry-archive-digest.ts";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -65,11 +66,11 @@ if (!/^[a-f0-9]{40}$/.test(releaseCommit) || !/^[a-f0-9]{64}$/.test(registryDige
 }
 const deployedCommit = await deployedReleaseCommit(process.cwd());
 if (deployedCommit !== releaseCommit) throw new Error("release commit does not match deployed checkout or image");
-const manifest = JSON.parse(await readFile(process.env.REGISTRY_MANIFEST_PATH?.trim() || "private/pilot-registry.json", "utf8"));
+const manifestBytes = await readFile(process.env.REGISTRY_MANIFEST_PATH?.trim() || "private/pilot-registry.json");
+if (registryArchiveDigest(manifestBytes) !== registryDigest) throw new Error("registry archive digest does not match release subject");
+const manifest = JSON.parse(manifestBytes.toString("utf8"));
 const parsedManifest = PilotRegistryManifestSchema.parse(manifest);
-if (parsedManifest.entries.length !== 1_000 || pilotRegistryDigest(parsedManifest) !== registryDigest) {
-  throw new Error("registry archive digest does not match release subject");
-}
+if (parsedManifest.entries.length !== 1_000) throw new Error("registry archive must contain 1,000 verified entries");
 
 const database = createDatabase(required("DATABASE_URL"));
 try {
