@@ -3,6 +3,8 @@ name: career-os
 x-career-os-service: &career-os-service
   build:
     context: .
+    args:
+      CAREER_OS_RELEASE_COMMIT: ${CAREER_OS_RELEASE_COMMIT:-unbound}
   restart: unless-stopped
   profiles: [local]
 

@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
 import { createDatabase } from "../packages/db/src/index.ts";
 import type { SQL } from "bun";
 import { PilotRegistryManifestSchema, pilotRegistryDigest } from "../packages/pilot-registry/src/index.ts";
+import { deployedReleaseCommit } from "./release-build-identity.ts";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -63,8 +63,8 @@ const registryDigest = required("REGISTRY_DIGEST");
 if (!/^[a-f0-9]{40}$/.test(releaseCommit) || !/^[a-f0-9]{64}$/.test(registryDigest)) {
   throw new Error("invalid release subject");
 }
-const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-if (head !== releaseCommit) throw new Error("release commit does not match deployed checkout");
+const deployedCommit = await deployedReleaseCommit(process.cwd());
+if (deployedCommit !== releaseCommit) throw new Error("release commit does not match deployed checkout or image");
 const manifest = JSON.parse(await readFile(process.env.REGISTRY_MANIFEST_PATH?.trim() || "private/pilot-registry.json", "utf8"));
 const parsedManifest = PilotRegistryManifestSchema.parse(manifest);
 if (parsedManifest.entries.length !== 1_000 || pilotRegistryDigest(parsedManifest) !== registryDigest) {

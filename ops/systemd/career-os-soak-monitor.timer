@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Career OS soak monitoring twice daily
+
+[Timer]
+OnCalendar=*-*-* 06,18:00:00 UTC
+Persistent=true
+Unit=career-os-soak-monitor.service
+
+[Install]
+WantedBy=timers.target

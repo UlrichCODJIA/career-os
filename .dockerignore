@@ -1,4 +1,5 @@
 .git
+.release-commit
 .github
 .env
 .env.*

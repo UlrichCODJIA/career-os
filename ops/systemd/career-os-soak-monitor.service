@@ -1,0 +1,12 @@
+[Unit]
+Description=Career OS aggregate soak preflight or immutable snapshot
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=azureuser
+Environment=CAREER_OS_DEPLOY_DIR=/opt/career-os
+EnvironmentFile=-/etc/career-os/soak-monitor.env
+ExecStart=/bin/bash /opt/career-os/scripts/run-soak-monitor.sh
+TimeoutStartSec=20min
